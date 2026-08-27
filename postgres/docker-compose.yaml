@@ -1,0 +1,42 @@
+# Local, free Postgres for review_backend/'s data layer -- replaces the
+# single-writer SQLite file. Deliberately a separate, dedicated container
+# from Airflow's own Postgres (airflow/docker-compose.yaml, its internal
+# metadata store) -- no cross-wiring, this project's application data and
+# Airflow's scheduler internals stay fully independent subsystems.
+#
+# Port 5432 is occupied on this machine by an unrelated native Postgres
+# install -- confirmed directly (Get-NetTCPConnection), not assumed. Uses
+# 5433 on the host instead.
+#
+#   docker compose up -d
+#   docker compose down          # add -v to also drop the data volume
+
+services:
+  postgres:
+    # Pinned to the exact patch version already verified running against
+    # this project (docker exec review-queue-postgres postgres --version),
+    # not the floating postgres:16 major-version tag -- for a hackathon
+    # submission, the same demo should behave identically across machines
+    # and across judging runs, including whatever patch release Docker Hub
+    # happens to be serving for :16 on a given day (flagged by an external
+    # review of this file).
+    image: postgres:16.14
+    container_name: review-queue-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-review_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-review_app_local_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-review_queue}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - review-queue-postgres-data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-review_app} -d ${POSTGRES_DB:-review_queue}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  review-queue-postgres-data:

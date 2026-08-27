@@ -1,0 +1,51 @@
+# Local, free Redis cache for review_backend/'s two genuinely expensive,
+# rarely-changing sub-computations (_cash_position_stats(),
+# reconciliation_statement() -- see review_backend/cache.py). Pure
+# performance layer, never a hard dependency the way postgres/ is -- holds
+# nothing of real value, safe to lose entirely on any restart.
+#
+# Deliberately a separate, dedicated container from Airflow's own internal
+# Redis (airflow/docker-compose.yaml, its Celery broker) -- same
+# "no cross-wiring between subsystems" principle as postgres/'s own
+# isolation from Airflow's internal Postgres. Airflow's redis is confirmed
+# NOT published to the host (its compose file uses `expose: [6379]`, not
+# `ports:` -- verified via `docker ps`, PORTS column shows bare
+# `6379/tcp`), and port 6379 is confirmed free on this machine directly
+# (Get-NetTCPConnection), not assumed -- same verification discipline as
+# postgres/'s port 5433 (which WAS occupied by an unrelated native install).
+#
+# 7.2-bookworm matches the exact tag already vetted and running elsewhere
+# in this repo (airflow/docker-compose.yaml) -- Redis's licensing changed
+# at 7.4+, reusing a tag this project already uses avoids a second license
+# question. No persistence (--save "" disables RDB snapshots, --appendonly
+# no disables AOF) -- disposable cache data, zero value surviving a
+# restart. No auth -- unlike postgres/, which holds real case/review data,
+# this holds nothing worth protecting even locally, a deliberate
+# simplification. Small explicit maxmemory bound as cheap, self-documenting
+# hygiene even though this workload's whole cardinality is a handful of keys.
+#
+#   docker compose -f redis/docker-compose.yaml up -d
+#   docker compose -f redis/docker-compose.yaml down
+
+services:
+  redis:
+    # Pinned to the exact patch version already verified running against
+    # this project (docker exec review-queue-redis redis-server --version),
+    # not the floating redis:7.2-bookworm minor-version tag -- same
+    # reasoning and same fix as postgres/docker-compose.yaml's image pin
+    # (flagged by an external review of this file): a hackathon demo
+    # should behave identically across machines and judging runs, not
+    # whatever patch Docker Hub happens to be serving for :7.2-bookworm
+    # on a given day.
+    image: redis:7.2.16-bookworm
+    container_name: review-queue-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "32mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

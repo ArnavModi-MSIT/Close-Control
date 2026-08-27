@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Finance Controller</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600;700&family=Public+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip-link" href="#architecture">Skip to content</a>
+<div class="railwrap"><div class="rail" id="rail"></div></div>
+<nav class="dots" id="dots" aria-label="Page sections"></nav>
+
+<main>
+<section class="hero" id="hero">
+  <div class="wrap">
+    <span class="kicker"><span class="pulse"></span> PIPELINE SNAPSHOT &middot; SEEDED &amp; REPRODUCIBLE &middot; RUN 2026-08-23</span>
+    <h1>The books close<br>themselves. <em>Mostly.</em></h1>
+    <p class="sub">A settlement-reconciliation agent modeled on Razorpay-style payment flows &mdash; gateway, two banking partners, and Razorpay's own internal settlement ledger, cross-checked automatically. The deterministic engine resolves 7 in 10 transactions on its own, with zero ML/LLM involvement; an LLM only reasons about the ambiguous tail, and never gets the final word.</p>
+    <div class="thesis">&ldquo;AI proposes, deterministic code disposes.&rdquo; &mdash; <b>the LLM never touches a number.</b></div>
+
+    <div class="stat-row">
+      <div class="stat-cell reveal"><span class="n tab-nums" data-count="2040">0</span><span class="l">transactions reconciled in 1.24s</span></div>
+      <div class="stat-cell reveal"><span class="n tab-nums" data-count="100" data-suffix="%">0%</span><span class="l">settlement-aware accuracy <span style="opacity:0.7;">(176/176)</span></span></div>
+      <div class="stat-cell reveal"><span class="n tab-nums" data-count="0.74" data-decimals="2" data-suffix="%">0%</span><span class="l">false auto-resolve rate</span></div>
+      <div class="stat-cell reveal"><span class="n tab-nums" data-count="70.4" data-decimals="1" data-suffix="%">0%</span><span class="l">resolved with zero ML/LLM</span></div>
+    </div>
+
+    <div class="money-row reveal" aria-label="Cash position, as of 25 Jul 2026">
+      <div class="money-cell good"><span class="n tab-nums">&#8377;1,04,89,323.45</span><span class="l">reconciled, bank-confirmed</span></div>
+      <div class="money-cell"><span class="n tab-nums">&#8377;18,32,658.30</span><span class="l">in transit, forecasted</span></div>
+      <div class="money-cell warn"><span class="n tab-nums">&#8377;49,93,749.90</span><span class="l">at risk, excluded until resolved</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">01 &middot; How it works</span>
+      <h2>Six layers, one rule: the model proposes, code decides.</h2>
+      <p class="desc">Every transaction flows through the same pipeline. Only the fraction the deterministic engine genuinely can't resolve on its own ever reaches an LLM &mdash; and even then, a separate, non-negotiable gate decides what happens next, and every escalation lands in a real human review queue.</p>
+    </div>
+
+    <div class="panel reveal flowchart-panel">
+      <div class="flowchart-scroll">
+        <svg class="flowchart" viewBox="0 0 1480 840" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Data flow: four sources into a deterministic matcher, clean transactions resolve immediately, exceptions go through a tool-using LLM layer and a deterministic gate, which either auto-resolves or sends the case to a governed human review workflow. Human-reviewed cases are stored in a local Postgres database; Airflow re-runs the matcher on a schedule and auto-closes stale cases via that same API; Redis optionally caches the ledger and cash position computation. Everything converges into the ledger and cash position. A separate evaluation layer scores the matcher offline against ground truth.">
+          <defs>
+            <marker id="fc-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="var(--ink-mute)" />
+            </marker>
+            <marker id="fc-arrow-soft" markerWidth="8" markerHeight="8" refX="6" refY="3.5" orient="auto">
+              <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--ink-mute)" opacity="0.6" />
+            </marker>
+          </defs>
+          <g fill="none" stroke="var(--ink-mute)" stroke-width="1.6" marker-end="url(#fc-arrow)">
+            <path d="M150,92 V112" />
+            <path d="M430,92 V112" />
+            <path d="M710,92 V112" />
+            <path d="M990,92 V112" />
+            <path d="M150,112 H990" marker-end="none" />
+            <path d="M580,112 V138" />
+            <path d="M580,220 V240" marker-end="none" />
+            <path d="M245,240 H825" marker-end="none" />
+            <path d="M245,240 V268" />
+            <path d="M825,240 V268" />
+            <path d="M785,340 V366" />
+            <path d="M785,464 V490" />
+            <path d="M785,572 V592" marker-end="none" />
+            <path d="M615,592 H955" marker-end="none" />
+            <path d="M615,592 V610" />
+            <path d="M955,592 V610" />
+            <path d="M245,350 V706" marker-end="none" />
+            <path d="M615,686 V706" marker-end="none" />
+            <path d="M955,686 V706" marker-end="none" />
+            <path d="M245,706 H955" marker-end="none" />
+            <path d="M580,706 V730" />
+          </g>
+          <!-- evaluation: dashed, deliberately distinct from the solid decision-flow arrows above --
+               this is an offline measurement, never part of the live decision path -->
+          <path d="M830,179 H1140" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="6,5" marker-end="url(#fc-arrow-soft)" opacity="0.85" />
+
+          <!-- sources -->
+          <g font-family="Public Sans, sans-serif">
+            <g>
+              <rect x="20" y="20" width="260" height="72" rx="10" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.4"/>
+              <text x="150" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">Gateway</text>
+              <text x="150" y="72" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">payments + settlements</text>
+            </g>
+            <g>
+              <rect x="300" y="20" width="260" height="72" rx="10" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.4"/>
+              <text x="430" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">Suryaan Bank</text>
+              <text x="430" y="72" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">raw partner export</text>
+            </g>
+            <g>
+              <rect x="580" y="20" width="260" height="72" rx="10" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.4"/>
+              <text x="710" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">Northbridge Bank</text>
+              <text x="710" y="72" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">raw partner export</text>
+            </g>
+            <g>
+              <rect x="860" y="20" width="260" height="72" rx="10" fill="var(--surface)" stroke="var(--border-2)" stroke-width="1.4"/>
+              <text x="990" y="52" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">Internal Ledger</text>
+              <text x="990" y="72" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">Razorpay's own GL</text>
+            </g>
+
+            <!-- matcher -->
+            <rect x="330" y="138" width="500" height="82" rx="12" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.6"/>
+            <text x="580" y="172" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="16" fill="var(--ink)">DETERMINISTIC MATCHER</text>
+            <text x="580" y="193" text-anchor="middle" font-size="12" fill="var(--ink-soft)">blocking &#8594; exact &#8594; split &#8594; tolerance &#8594; ambiguity</text>
+            <text x="580" y="209" text-anchor="middle" font-size="11" fill="var(--good)" font-weight="600">ZERO ML/LLM &middot; ~1,645 txn/s</text>
+
+            <!-- left: clean/auto-resolved -->
+            <rect x="60" y="268" width="370" height="82" rx="12" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
+            <text x="245" y="300" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14.5" fill="var(--ink)">CLEAN / AUTO-RESOLVED</text>
+            <text x="245" y="320" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">~70.4% of volume</text>
+            <text x="245" y="337" text-anchor="middle" font-size="11" fill="var(--good)" font-weight="600">zero LLM involvement, ever</text>
+
+            <!-- right: escalated exceptions -->
+            <rect x="470" y="268" width="630" height="72" rx="12" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.4"/>
+            <text x="785" y="298" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14.5" fill="var(--ink)">ESCALATED EXCEPTIONS</text>
+            <text x="785" y="318" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">~29.6% &mdash; the only cases an LLM ever sees</text>
+
+            <!-- LLM layer -->
+            <rect x="470" y="366" width="630" height="98" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+            <text x="785" y="398" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">LLM LAYER &mdash; Agent / Investigator</text>
+            <text x="785" y="418" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">single-shot classify, or multi-step tool-using investigation</text>
+            <text x="785" y="436" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-soft)">tools: lookup_related_transactions &middot; search_bank_statement &middot; compute_delta</text>
+            <text x="785" y="454" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">proposes a resolution &mdash; never authorizes one</text>
+
+            <!-- gate -->
+            <rect x="470" y="490" width="630" height="82" rx="12" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.8"/>
+            <text x="785" y="522" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">DETERMINISTIC GATE</text>
+            <text x="785" y="542" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">allowlist &middot; policy match &middot; confidence &middot; evidence &middot; risk ceiling</text>
+            <text x="785" y="559" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">plain Python &mdash; ALL 6 conditions required, every time</text>
+
+            <!-- gate outcomes -->
+            <rect x="470" y="610" width="290" height="76" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
+            <text x="615" y="641" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="13.5" fill="var(--ink)">AUTO-RESOLVE</text>
+            <text x="615" y="661" text-anchor="middle" font-size="11" fill="var(--ink-soft)">rare &mdash; every condition held</text>
+
+            <rect x="810" y="610" width="290" height="76" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.4"/>
+            <text x="955" y="634" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="13.5" fill="var(--ink)">HUMAN REVIEW</text>
+            <text x="955" y="652" text-anchor="middle" font-size="11" fill="var(--ink-soft)">analyst &#8594; manager (&#8377;50k+)</text>
+            <text x="955" y="669" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">override &middot; immutable audit trail</text>
+
+            <!-- final -->
+            <rect x="330" y="730" width="500" height="90" rx="12" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.6"/>
+            <text x="580" y="763" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="16" fill="#FFFFFF">LEDGER UPDATE + CASH POSITION</text>
+            <text x="580" y="784" text-anchor="middle" font-size="12" fill="#FFFFFF" opacity="0.9">confirmed / in-transit / at-risk</text>
+            <text x="580" y="801" text-anchor="middle" font-size="11" fill="#FFFFFF" opacity="0.85" font-weight="600">projected honestly, never guessed</text>
+
+            <!-- infra: Postgres, Redis, Airflow -- all local Docker, all optional-or-storage,
+                 never part of the deterministic decision math itself. Dashed = scheduled/cached
+                 side process, same convention as the evaluation connector below. -->
+            <path d="M1100,648 H1140" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" marker-end="url(#fc-arrow)" />
+            <path d="M1290,700 V684" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="6,5" marker-end="url(#fc-arrow-soft)" opacity="0.85" />
+            <path d="M830,775 H860" fill="none" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="6,5" marker-end="url(#fc-arrow-soft)" opacity="0.85" />
+
+            <rect x="1140" y="612" width="300" height="72" rx="12" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.6"/>
+            <text x="1290" y="639" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14" fill="var(--ink)">POSTGRES</text>
+            <text x="1290" y="658" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">cases + reviews &middot; local Docker</text>
+            <text x="1290" y="674" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">human-reviewed cases only</text>
+
+            <rect x="1140" y="700" width="300" height="84" rx="12" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="7,5"/>
+            <text x="1290" y="726" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14" fill="var(--ink)">AIRFLOW</text>
+            <text x="1290" y="746" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">re-runs the matcher on a schedule</text>
+            <text x="1290" y="762" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">POST /api/reverify &middot; auto-closes stale cases</text>
+
+            <rect x="860" y="745" width="260" height="60" rx="10" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.4" stroke-dasharray="6,4"/>
+            <text x="990" y="769" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="12.5" fill="var(--ink)">REDIS</text>
+            <text x="990" y="787" text-anchor="middle" font-size="10" fill="var(--ink-soft)">caches this computation &middot; 8s TTL &middot; optional</text>
+
+            <!-- evaluation: offline, scores the matcher against ground truth -- dashed
+                 border reinforces "outside the live pipeline", per the dashed connector above -->
+            <rect x="1140" y="138" width="300" height="434" rx="12" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="7,5"/>
+            <text x="1290" y="175" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">EVALUATION</text>
+            <text x="1290" y="198" text-anchor="middle" font-size="11" fill="var(--ink-soft)">evaluate.py &mdash; offline, scored</text>
+            <text x="1290" y="215" text-anchor="middle" font-size="11" fill="var(--ink-soft)">against ground_truth.csv</text>
+
+            <text x="1290" y="250" text-anchor="middle" font-size="11.5" fill="var(--ink)">100% settlement-aware accuracy (176/176)</text>
+            <text x="1290" y="273" text-anchor="middle" font-size="11.5" fill="var(--ink)">98.96% auto-resolve precision</text>
+            <text x="1290" y="296" text-anchor="middle" font-size="11.5" fill="var(--ink)">73.91% auto-resolve coverage</text>
+            <text x="1290" y="319" text-anchor="middle" font-size="11.5" fill="var(--ink)">40/40 hard negatives (adversarial)</text>
+            <text x="1290" y="342" text-anchor="middle" font-size="11.5" fill="var(--ink)">~1,645 txn/s throughput</text>
+
+            <text x="1290" y="380" text-anchor="middle" font-size="10.5" fill="var(--ink-mute)">RAG ablation + investigator eval</text>
+            <text x="1290" y="397" text-anchor="middle" font-size="10.5" fill="var(--ink-mute)">score the LLM layers separately</text>
+            <text x="1290" y="414" text-anchor="middle" font-size="10.5" fill="var(--ink-mute)">&mdash; see CLAUDE.md &sect;6</text>
+          </g>
+        </svg>
+      </div>
+      <p class="hint" style="margin-top:14px;">Every box above is a real code path, not an illustration &mdash; trace any of it in <span class="mono">matching/</span>, <span class="mono">agent/</span>, <span class="mono">investigator/</span>, <span class="mono">review_backend/</span>, <span class="mono">postgres/</span>, <span class="mono">redis/</span>, or <span class="mono">airflow/</span>. Postgres, Redis, and Airflow are all local Docker containers &mdash; free, no cloud dependency, and each isolated from Airflow's own internal Postgres/Redis (its Celery broker), never cross-wired.</p>
+    </div>
+
+    <div class="panel reveal">
+      <div class="split-bar" aria-hidden="true">
+        <div id="split-clean" style="width:0%; background:var(--good);">CLEAN</div>
+        <div id="split-auto" style="width:0%; background:var(--accent);">AUTO-RESOLVED</div>
+        <div id="split-agent" style="width:0%; background:var(--warn); color:var(--ink);">TO AGENT</div>
+      </div>
+      <div class="legend-row">
+        <div class="legend-item"><span class="sw" style="background:var(--good)"></span>1,397 clean &mdash; no exception detected</div>
+        <div class="legend-item"><span class="sw" style="background:var(--accent)"></span>40 auto-resolved deterministically</div>
+        <div class="legend-item"><span class="sw" style="background:var(--warn)"></span>603 reach the LLM layer</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="value" style="background:var(--ground-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">02 &middot; Why it matters for Razorpay</span>
+      <h2>Throughput a finance team can trust.</h2>
+    </div>
+    <div class="value-grid">
+      <div class="value-card reveal">
+        <span class="vn">1,645<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> txn/s</span></span>
+        <h4>2,040 transactions in 1.24 seconds</h4>
+        <p>A full month of settlement data &mdash; gateway, bank, ledger, all cross-checked &mdash; end to end, on a laptop CPU, with zero LLM calls in this layer. Timed on every run by <span class="mono">evaluate.py</span>, never hand-typed.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">70.4%</span>
+        <h4>Resolved with zero ML/LLM</h4>
+        <p>The deterministic core carries the volume. The LLM is reserved for the genuinely ambiguous tail &mdash; the only place judgment, not arithmetic, is actually needed.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">0.74%</span>
+        <h4>A measured safety ceiling, not a guess</h4>
+        <p>False auto-resolve rate, scored against hidden ground truth. Every auto-resolve decision is bounded by a policy citation match, a confidence floor, and a hard rupee ceiling &mdash; simultaneously.</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <p class="mono">AI Finance Controller &middot; Razorpay Buildathon, Track 04 &middot; seeded &amp; reproducible (RNG_SEED=42) &middot; every number computed from an actual pipeline run and embedded as a static snapshot, never hand-typed &mdash; see export_dashboard_data.py. Deterministic layers (matcher, gate, cash position, throughput) re-verified 2026-08-24; live-LLM figures (RAG ablation, investigation traces) are from their own logged runs and are not deterministically reproducible by design.</p>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Same brand palette as ui/styles.css (the showcase page), carried over
+   deliberately so the review queue still reads as the same product even
+   though it's now a separate React app. Single warm light theme, no dark
+   mode -- same choice showcase.html already made. */
+@theme {
+  --font-sans: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-ground: #FCF6F3;
+  --color-ground-2: #F6E7E1;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #FDF8F5;
+  --color-ink: #2B1D1F;
+  --color-ink-soft: #7A6165;
+  --color-ink-mute: #A68A8E;
+  --color-border: rgba(43, 29, 31, 0.10);
+  --color-border-2: rgba(43, 29, 31, 0.17);
+  --color-accent: #8B2560;
+  --color-accent-soft: #F6E1EC;
+  --color-good: #0B8F2F;
+  --color-good-soft: #E4F5E6;
+  --color-warn: #A8720A;
+  --color-warn-soft: #FBF0DA;
+  --color-crit: #C23A34;
+  --color-crit-soft: #FBE7E5;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}

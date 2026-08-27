@@ -1,0 +1,25 @@
+# Core -- required for every LLM_PROVIDER, including the default (mock)
+pandas==2.3.3
+numpy==2.2.6
+pydantic==2.13.3
+python-dotenv==1.2.3
+requests==2.33.1
+
+# Optional -- only imported if LLM_PROVIDER=anthropic in .env. Safe to skip
+# if you're only using mock/groq/ollama (see README setup section).
+anthropic==1.0.0
+
+# Review queue (review_backend/) -- local-only human review app. Free, no
+# cloud dependency. psycopg[binary] ships precompiled Windows wheels, no
+# C compiler/pg_config needed (unlike psycopg2). redis is the pure-Python
+# client (no hiredis C-extension) -- also no compiler needed, and these
+# cached payloads are tiny JSON blobs, nowhere near where hiredis's
+# parsing speedup would matter.
+fastapi==0.141.1
+uvicorn==0.52.4
+psycopg[binary]==3.3.4
+redis==8.1.0
+
+# Test-only -- fastapi.testclient.TestClient needs httpx to drive the app
+# in-process (test_review_api.py). Not imported by any runtime code path.
+httpx==0.28.1
