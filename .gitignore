@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 data/*
+CLAUDE.md
 
 # Airflow's official docker-compose.yaml volume-mounts these onto the host --
 # runtime state written by the containers (logs, generated airflow.cfg,
