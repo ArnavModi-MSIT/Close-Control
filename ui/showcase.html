@@ -126,7 +126,7 @@
 
             <!-- left: clean/auto-resolved -->
             <rect x="60" y="268" width="370" height="82" rx="12" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
-            <text x="245" y="300" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14.5" fill="var(--ink)">CLEAN / AUTO-RESOLVED</text>
+            <text x="245" y="300" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14.5" fill="var(--ink)">CLEAN / MATCHER-AUTO-RESOLVED</text>
             <text x="245" y="320" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">~70.2% of volume</text>
             <text x="245" y="337" text-anchor="middle" font-size="11" fill="var(--good)" font-weight="600">zero LLM involvement, ever</text>
 
@@ -213,12 +213,18 @@
              blocked; script.js collapses them to 0 and animates back up when
              JS is available. -->
         <div id="split-clean" style="width:67.4%; background:var(--good);">CLEAN</div>
-        <div id="split-auto" style="width:2.8%; background:var(--accent);">AUTO-RESOLVED</div>
+        <div id="split-auto" style="width:2.8%; background:var(--accent);">MATCHER-AUTO-RESOLVED</div>
         <div id="split-agent" style="width:29.8%; background:var(--warn); color:var(--ink);">TO AGENT</div>
       </div>
       <div class="legend-row">
         <div class="legend-item"><span class="sw" style="background:var(--good)"></span>1,397 clean &mdash; no exception detected</div>
-        <div class="legend-item"><span class="sw" style="background:var(--accent)"></span>58 auto-resolved deterministically</div>
+        <!-- Deliberately "matcher-auto-resolved," not the bare "auto-resolved"
+             this card used to say -- the review-queue dashboard has its own,
+             DIFFERENT "AI auto-resolved" figure (8 cases, agent-gate-level,
+             post-LLM), and a reader comparing this page against that
+             dashboard could otherwise merge two different pipeline stages
+             into one number. Found via a frame-by-frame UI review. -->
+        <div class="legend-item"><span class="sw" style="background:var(--accent)"></span>58 matcher-auto-resolved &mdash; deterministic, before any LLM involvement</div>
         <div class="legend-item"><span class="sw" style="background:var(--warn)"></span>617 reach the LLM layer</div>
       </div>
     </div>
@@ -246,7 +252,7 @@
       <div class="value-card reveal">
         <span class="vn">617<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> &rarr; 130</span></span>
         <h4>617 tickets are not 617 problems</h4>
-        <p>One settlement whose bank posting arrived without a UTR flags <i>every</i> payment batched into it &mdash; so a single upstream event fans out into hundreds of separate cases that all clear together. Clustering on that exact fan-out key collapses the queue to <b>130 real root causes</b>, and just <b>31 of them cover 518 cases &mdash; 84% of the backlog</b>. The worst offender alone is 497 cases tracing to 21 settlements. Deterministic, ~70&thinsp;ms, no embedding model: the cases that share a cause already share a join key, so approximating it with vectors would be strictly worse.</p>
+        <p>One settlement whose bank posting arrived without a UTR flags <i>every</i> payment batched into it &mdash; so a single upstream event fans out into hundreds of separate cases that all clear together. Clustering on that exact fan-out key collapses the queue to <b>130 real root causes</b>, and just <b>31 of them cover 518 cases &mdash; 84% of the backlog</b>. Zoomed out by exception <i>type</i> rather than by individual cause, <span class="mono">missing_bank_reference</span> alone spans <b>497 cases across 21 different settlements</b> &mdash; a separate, wider-lens stat from the 518-case cluster figure above, not the size of any single cluster (the single largest cluster is 47 cases). Deterministic, ~70&thinsp;ms, no embedding model: the cases that share a cause already share a join key, so approximating it with vectors would be strictly worse.</p>
       </div>
       <div class="value-card reveal">
         <span class="vn">617</span>
@@ -277,7 +283,7 @@
       <div class="value-card reveal">
         <span class="vn">0.72%</span>
         <h4>A measured safety ceiling, not a guess</h4>
-        <p>False auto-resolve rate, scored against hidden ground truth. Every auto-resolve decision is bounded by a policy citation match, a confidence floor, and a hard rupee ceiling &mdash; simultaneously.</p>
+        <p>False auto-resolve rate, scored against hidden ground truth over all 2,072 transactions &mdash; a wider denominator than the 98.97% auto-resolve <i>precision</i> figure elsewhere on this page, which scores only the 1,455 cases the system actually auto-resolved. The two aren't complements of each other; they answer different questions. Every auto-resolve decision is bounded by a policy citation match, a confidence floor, and a hard rupee ceiling &mdash; simultaneously.</p>
       </div>
     </div>
   </div>

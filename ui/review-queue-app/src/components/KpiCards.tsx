@@ -72,7 +72,12 @@ export function KpiCards({ stats, streamMode }: { stats: StatsResponse; streamMo
       <Kpi value={String(needsHumanNow)} label="Needs a human" />
       <Kpi value={String(stats.investigated_count)} label="Investigated" />
       <Kpi value={String(stats.counts_by_tier["2"])} label="Tier 2 (≥₹50k)" />
-      <Kpi value={rupeesCompact(totalAtRisk)} label="Total at risk" title={withExactValue(undefined, rupees(totalAtRisk))} />
+      <Kpi value={rupeesCompact(totalAtRisk)} label="Total at risk"
+           title={withExactValue("Sum of amount_at_risk_rupees across all 617 escalated review-queue cases -- "
+             + "a different metric, different population, from the cash-position snapshot's own at-risk figure "
+             + "(money excluded from the cash projection, computed by cash_position/engine.py). Found worth "
+             + "distinguishing via a frame-by-frame UI review.", rupees(totalAtRisk))}
+           caption="Escalated-queue sum -- see cash position separately" />
       {/* Money-centric figures -- real cash_position/engine.py output, see
           review_backend/main.py's _cash_position_stats(). Null (not zero)
           when the underlying data isn't scoreable yet -- rupees() already
