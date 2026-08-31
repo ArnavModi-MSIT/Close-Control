@@ -190,6 +190,21 @@ _REVIEWS_MIGRATIONS = [
     # for rows written before this column existed. Found via external
     # review of the review-queue backend.
     ("previous_status", "TEXT"),
+    # Hash-chained audit trail: sha256(prev row's chain_hash + this row's
+    # own canonical fields), computed and stored at insert time in
+    # submit_review() -- see review_backend/chain.py. Existing tamper
+    # evidence in this project (seed_review_queue.py's _canonical_hash(),
+    # audit_manifest.py) proves a single case's or a single run's content
+    # is unaltered in isolation; neither proves the SEQUENCE of review
+    # events is intact -- nothing stopped a row from being silently
+    # deleted or reordered. A hash chain does: altering or removing any
+    # historical row breaks verification for every row after it, not just
+    # that one. NULL for rows written before this column existed --
+    # verify_chain() in chain.py treats the oldest such row as a second
+    # genesis point (a real, disclosed gap in coverage for pre-chain
+    # history, not silently glossed over as if the chain reached back
+    # further than it actually does).
+    ("chain_hash", "TEXT"),
 ]
 
 

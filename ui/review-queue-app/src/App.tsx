@@ -4,7 +4,9 @@ import { KpiCards } from "./components/KpiCards";
 import { StatusDonut } from "./components/charts/StatusDonut";
 import { ExceptionTypeBar } from "./components/charts/ExceptionTypeBar";
 import { InvestigationDonut } from "./components/charts/InvestigationDonut";
+import { QAPanel } from "./components/QAPanel";
 import { ReconciliationStatement } from "./components/ReconciliationStatement";
+import { RootCauseClusters } from "./components/RootCauseClusters";
 import { FilterBar } from "./components/FilterBar";
 import { CaseTable } from "./components/CaseTable";
 import { Pager } from "./components/Pager";
@@ -50,7 +52,7 @@ export default function App() {
   return (
     <>
       <Header streamMode={streamMode} />
-      <main className="mx-auto max-w-[1280px] px-6 py-8 pb-20">
+      <main className="mx-auto max-w-[1600px] px-6 py-8 pb-20">
         <div className="mb-6 flex flex-wrap items-baseline justify-between gap-4">
           <div>
             <h1 className="text-[1.7rem] font-bold">Reconciliation review queue</h1>
@@ -83,8 +85,10 @@ export default function App() {
           </div>
         )}
 
-        <div className="mb-6">
+        <div className="mb-6 flex flex-col gap-4">
+          <QAPanel />
           <ReconciliationStatement />
+          <RootCauseClusters />
         </div>
 
         <FilterBar
@@ -95,7 +99,7 @@ export default function App() {
           onSortChange={(v) => { setSortValue(v); setPage(1); }}
         />
 
-        <div className="grid min-w-0 grid-cols-1 items-start gap-5 lg:grid-cols-[1.3fr_1fr]">
+        <div className="grid min-w-0 grid-cols-1 items-start gap-5 lg:grid-cols-[1.7fr_1fr]">
           <div className="min-w-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
             <div className="overflow-x-auto">
               <CaseTable items={cases.data?.items ?? []} selected={selected} onSelect={setSelected} />

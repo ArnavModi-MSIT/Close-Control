@@ -56,6 +56,40 @@ _db.DATABASE_URL = _TEST_DATABASE_URL
 from fastapi.testclient import TestClient  # noqa: E402
 import review_backend.main as _main  # noqa: E402
 from review_backend.main import app  # noqa: E402
+from review_backend import chain as _chain  # noqa: E402
+from review_backend import cycle_time as _cycle_time  # noqa: E402
+import corrections as _corrections  # noqa: E402
+
+# submit_review() now appends a correction to CASH_POSITION_DATA_DIR's
+# correction_log.jsonl on every override -- and unlike the DB above, that
+# module global isn't test-isolated by default. Left pointed at the real
+# data/ (this file's own default), EVERY override submitted anywhere in
+# this test run would write a real entry into the live demo's own
+# correction_log.jsonl. Same isolation principle as this file's own
+# throwaway database, applied to the one file-write path submit_review()
+# now has -- set for the WHOLE run (not scoped to one section, the way
+# the root-cause-clusters test's local override further below is) since
+# overrides are submitted throughout this file, not in one place.
+#
+# CASH_POSITION_DATA_DIR is NOT corrections-only, though -- SLA and
+# cash-position computation (GET /api/cases/<id> among others) also read
+# the real matcher source files from it. A first attempt pointed this at
+# an EMPTY temp dir and broke every SLA-touching endpoint with a real
+# FileNotFoundError on gateway.json -- caught by actually running this
+# suite, not assumed safe. The correct fix is a temp dir that's a genuine
+# COMPLETE copy of a real data directory (matching what a real deployment's
+# data dir actually contains), not a partial one that only serves
+# corrections.
+import tempfile as _tempfile  # noqa: E402
+import shutil as _shutil_setup  # noqa: E402
+_TEST_DATA_DIR = _tempfile.mkdtemp(prefix="review_api_test_data_")
+_REAL_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+for _fname in ("gateway.json", "bank_statement.csv", "internal_settlement_ledger.csv",
+                "loan_recovery_schedule.csv"):
+    _src = os.path.join(_REAL_DATA_DIR, _fname)
+    if os.path.exists(_src):
+        _shutil_setup.copy2(_src, os.path.join(_TEST_DATA_DIR, _fname))
+_main.CASH_POSITION_DATA_DIR = _TEST_DATA_DIR
 
 TIER1_TXN = "trn-test-tier1"   # small amount -> one analyst closes it
 TIER2_TXN = "trn-test-tier2"   # >= MANAGER_APPROVAL_THRESHOLD_RUPEES -> needs two people
@@ -473,6 +507,325 @@ def main() -> None:
         _main.run_matcher = _real_run_matcher
     print()
 
+    # --------------------------------------------------------- bulk review
+    print("Bulk review -- the root-cause-cluster action")
+    conn = _db.get_connection()
+    try:
+        insert_case(conn, "trn-test-bulk1", 900.0, 1)       # tier 1
+        insert_case(conn, "trn-test-bulk2", 950.0, 1)       # tier 1
+        insert_case(conn, "trn-test-bulk3", 75000.0, 2)     # tier 2 -- mixed tier within one bulk call
+        insert_case(conn, "trn-test-bulk-preclosed", 900.0, 1)
+        conn.commit()
+    finally:
+        conn.close()
+
+    # pre-close one case directly, exactly as a human already would have --
+    # the bulk call below must skip it, not silently re-approve it.
+    review(client, "trn-test-bulk-preclosed", reviewer_name="ana", reviewer_role="analyst",
+           decision="approved", notes="already handled before the bulk action")
+
+    r = client.post("/api/cases/bulk-review", json={
+        "transaction_ids": ["trn-test-bulk1", "trn-test-bulk2", "trn-test-bulk3",
+                              "trn-test-bulk-preclosed", "trn-test-does-not-exist"],
+        "reviewer_name": "ana", "reviewer_role": "analyst",
+        "decision": "approved", "notes": "same root cause, cluster-reviewed together",
+    })
+    check("bulk review accepted", r.status_code == 200, r.text[:300])
+    body = r.json()
+    check("requested count matches the submitted list", body["requested"] == 5, str(body))
+    check("3 of 5 reviewed, 2 skipped (preclosed + missing)",
+          body["reviewed_count"] == 3 and body["skipped_count"] == 2, str(body))
+
+    by_txn = {res["transaction_id"]: res for res in body["results"]}
+    check("tier-1 case in the batch lands directly on 'approved'",
+          by_txn["trn-test-bulk1"]["outcome"] == "reviewed"
+          and by_txn["trn-test-bulk1"]["new_status"] == "approved", str(by_txn["trn-test-bulk1"]))
+    check("the OTHER tier-1 case is independently 'approved' too",
+          by_txn["trn-test-bulk2"]["new_status"] == "approved", str(by_txn["trn-test-bulk2"]))
+    check("the tier-2 case in the SAME batch instead lands on "
+          "'pending_manager_approval' -- bulk does not bypass per-case tier logic",
+          by_txn["trn-test-bulk3"]["outcome"] == "reviewed"
+          and by_txn["trn-test-bulk3"]["new_status"] == "pending_manager_approval",
+          str(by_txn["trn-test-bulk3"]))
+    check("the already-approved case is skipped, not silently re-approved",
+          by_txn["trn-test-bulk-preclosed"]["outcome"] == "skipped", str(by_txn["trn-test-bulk-preclosed"]))
+    check("a transaction_id with no case is skipped with a clear reason",
+          by_txn["trn-test-does-not-exist"]["outcome"] == "skipped"
+          and "no case found" in by_txn["trn-test-does-not-exist"]["reason"],
+          str(by_txn["trn-test-does-not-exist"]))
+
+    r2 = client.get("/api/cases/trn-test-bulk1")
+    check("each bulk-reviewed case wrote a real, single review row via the "
+          "SAME path a single-case review uses -- not a special bulk writer",
+          len(r2.json()["review_history"]) == 1
+          and r2.json()["review_history"][0]["reviewer_name"] == "ana", str(r2.json()["review_history"]))
+
+    r = client.post("/api/cases/bulk-review", json={
+        "transaction_ids": ["trn-test-bulk1", "trn-test-bulk1"],
+        "reviewer_name": "ana", "reviewer_role": "analyst", "decision": "approved", "notes": "dup",
+    })
+    check("duplicate transaction_ids in one bulk request are rejected (422)",
+          r.status_code == 422, f"got {r.status_code}: {r.text[:160]}")
+
+    r = client.post("/api/cases/bulk-review", json={
+        "transaction_ids": ["trn-test-bulk2"],
+        "reviewer_name": "ana", "reviewer_role": "analyst", "decision": "escalated",
+    })
+    check("bulk escalate without notes is rejected (422), same rule as a single-case escalation",
+          r.status_code == 422, f"got {r.status_code}: {r.text[:160]}")
+
+    r = client.post("/api/cases/bulk-review", json={
+        "transaction_ids": ["trn-test-bulk2"],
+        "reviewer_name": "ana", "reviewer_role": "analyst", "decision": "overridden",
+    })
+    check("'overridden' is not an allowed bulk decision (422) -- "
+          "per-case old-value confirmation can't be skipped in bulk",
+          r.status_code == 422, f"got {r.status_code}: {r.text[:160]}")
+
+    r = client.post("/api/cases/bulk-review", json={"transaction_ids": [], "reviewer_name": "ana",
+                                                       "reviewer_role": "analyst", "decision": "approved"})
+    check("an empty transaction_ids list is rejected (422)", r.status_code == 422, f"got {r.status_code}")
+    print()
+
+    # ---------------------------------------- root-cause clusters endpoint
+    print("Root-cause clusters (deterministic, matcher-derived)")
+
+    def fake_run_matcher_clusters(data_dir):
+        # Two settlements: one fans out to 3 cases (a real cluster), the
+        # other is a singleton -- proves both branches of
+        # matching/root_cause.py's grouping render through the live API,
+        # not just in its own unit-level tests.
+        report = pd.DataFrame({
+            "transaction_id": ["trn-rc-a", "trn-rc-b", "trn-rc-c", "trn-rc-solo"],
+            "settlement_id": ["setl_fanout", "setl_fanout", "setl_fanout", "setl_solo"],
+            "merchant_id": ["merch_test"] * 4,
+            "final_exception_type": ["missing_bank_reference"] * 3 + ["partial_refund"],
+            "auto_resolve_eligible": [False, False, False, False],
+            "ledger_expected_net_rupees": [100.0, 200.0, 300.0, 50.0],
+            "risk_class": ["medium", "medium", "high", "low"],
+        })
+        return report, None, None
+
+    _real_run_matcher2 = _main.run_matcher
+    _real_cash_position_data_dir = _main.CASH_POSITION_DATA_DIR
+    _main.run_matcher = fake_run_matcher_clusters
+    # /api/root-cause-clusters is Redis-cached keyed by CASH_POSITION_DATA_DIR
+    # (see review_backend/cache.py's root_cause_clusters_key). Left pointed
+    # at the real default, this synthetic report would be written under the
+    # SAME cache key the live demo server uses -- poisoning it with fake
+    # data for up to ROOT_CAUSE_CLUSTERS_CACHE_TTL_SECONDS. A unique
+    # per-process value keeps this test's Redis traffic on its own key,
+    # same isolation principle as this file's own throwaway database.
+    _main.CASH_POSITION_DATA_DIR = f"test-data-dir-{os.getpid()}"
+    try:
+        r = client.get("/api/root-cause-clusters")
+        check("GET /api/root-cause-clusters returns 200", r.status_code == 200, r.text[:300])
+        body = r.json()
+        check("4 escalated cases collapse to exactly 2 clusters",
+              body["summary"]["escalated_cases"] == 4 and body["summary"]["root_cause_clusters"] == 2,
+              str(body["summary"]))
+        clusters_by_id = {c["cluster_id"]: c for c in body["clusters"]}
+        top = body["clusters"][0]
+        check("the 3-case settlement is the largest cluster, sorted first",
+              top["case_count"] == 3 and set(top["transaction_ids"]) == {"trn-rc-a", "trn-rc-b", "trn-rc-c"},
+              str(top))
+        check("cluster risk_class is the WORST member's, not an average (high, not medium)",
+              top["risk_class"] == "high", str(top))
+        check("amount_at_risk sums the cluster's own ledger_expected_net_rupees",
+              abs(top["amount_at_risk_rupees"] - 600.0) < 0.01, str(top))
+        solo = [c for c in body["clusters"] if c["case_count"] == 1][0]
+        check("the singleton settlement is its own cluster",
+              solo["transaction_ids"] == ["trn-rc-solo"], str(solo))
+    finally:
+        _main.run_matcher = _real_run_matcher2
+        _main.CASH_POSITION_DATA_DIR = _real_cash_position_data_dir
+    print()
+
+    # ------------------------------------------------- hash-chained audit
+    print("Hash-chained audit trail")
+    r = client.get("/api/audit-chain/verify")
+    check("GET /api/audit-chain/verify returns 200", r.status_code == 200, r.text[:300])
+    body = r.json()
+    check("chain reports intact over every real review submitted so far",
+          body["intact"] and body["broken_at"] is None, str(body))
+    check("every review in this fresh test DB was written AFTER chain_hash existed "
+          "(0 pre-chain rows)", body["pre_chain_rows"] == 0, str(body))
+    check("checked count matches total_rows when there are no pre-chain rows",
+          body["checked"] == body["total_rows"] and body["total_rows"] > 0, str(body))
+    real_chain_length = body["total_rows"]
+
+    conn = _db.get_connection()
+    try:
+        # A row written before chain_hash existed (simulated directly via
+        # SQL, bypassing submit_review() -- exactly what a genuinely older
+        # database row looks like): chain_hash NULL. Must be treated as a
+        # disclosed gap, not silently bridged or falsely flagged broken.
+        conn.execute(
+            """INSERT INTO reviews
+               (review_uuid, transaction_id, reviewer_name, reviewer_role, decision,
+                previous_status, resulting_status, created_at, application_version, chain_hash)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)""",
+            ("pre-chain-test-uuid", TIER1_TXN, "legacy-system", "analyst", "escalated",
+             "approved", "escalated", dt.datetime.now(dt.timezone.utc).isoformat(), "0.0.1"),
+        )
+        conn.commit()
+
+        result = _chain.verify_chain(conn)
+        check("a pre-chain (NULL chain_hash) row is disclosed, not silently bridged",
+              result["pre_chain_rows"] == 1, str(result))
+        check("chain still reports intact -- a legacy row with no hash isn't a break",
+              result["intact"], str(result))
+        check("checked count is the real chain length, NOT total_rows "
+              "(the pre-chain row correctly isn't counted as verified)",
+              result["checked"] == real_chain_length, str(result))
+
+        # Real tamper test -- same discipline as audit_manifest.py's own:
+        # prove detection actually happens, don't just describe the
+        # mechanism. Picks a real chained row, mutates it in place,
+        # verifies detection, restores it, verifies clean again.
+        row = conn.execute(
+            "SELECT id, review_uuid, notes FROM reviews WHERE chain_hash IS NOT NULL "
+            "ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+        original_notes = row["notes"]
+        conn.execute("UPDATE reviews SET notes = %s WHERE id = %s",
+                      (f"{original_notes or ''} [TAMPERED BY TEST]", row["id"]))
+        conn.commit()
+
+        tampered = _chain.verify_chain(conn)
+        check("tampering a historical review's notes is detected",
+              not tampered["intact"] and tampered["broken_at"]["id"] == row["id"],
+              str(tampered))
+
+        conn.execute("UPDATE reviews SET notes = %s WHERE id = %s", (original_notes, row["id"]))
+        conn.commit()
+        restored = _chain.verify_chain(conn)
+        check("restoring the original value makes the chain intact again",
+              restored["intact"] and restored["pre_chain_rows"] == 1, str(restored))
+    finally:
+        conn.close()
+    print()
+
+    # ------------------------------------------------------ cycle time
+    print("Cycle-time / bottleneck tracking")
+    conn = _db.get_connection()
+    try:
+        insert_case(conn, "trn-test-cycle1", 900.0, 1)
+        insert_case(conn, "trn-test-cycle2", 900.0, 1)
+        conn.commit()
+    finally:
+        conn.close()
+
+    # cycle1: reviewed once (approved) -- a real, if near-instant, completed
+    # "pending" interval. cycle2: left untouched -- still accruing in
+    # "pending", right-censored (no completed interval at all yet).
+    review(client, "trn-test-cycle1", reviewer_name="ana", reviewer_role="analyst",
+           decision="approved", notes="closing this one")
+
+    conn = _db.get_connection()
+    try:
+        result = _cycle_time.cycle_time_summary(conn)
+    finally:
+        conn.close()
+
+    pending = result["by_status"].get("pending", {})
+    approved = result["by_status"].get("approved", {})
+    check("a case with zero reviews contributes to 'pending's currently-open bucket, "
+          "not a completed one", pending.get("currently_open_count", 0) >= 1, str(pending))
+    check("a case that WAS reviewed contributes a real completed 'pending' interval "
+          "(the time between seeded_at and its approval)",
+          approved is not None and pending.get("completed") is not None,
+          str(result["by_status"]))
+    check("completed pending->approved duration is a small non-negative number "
+          "of days (submitted moments after being seeded, same test run)",
+          pending["completed"] is not None and 0 <= pending["completed"]["mean_days"] < 1,
+          str(pending.get("completed")))
+    check("a terminal status like 'approved' is excluded from by_status entirely -- "
+          "'currently_open_count' would otherwise misreport 'time since the terminal "
+          "decision' as if it were a real queue wait (found via external review; "
+          "was previously asserted the OTHER way, matching the bug this test now proves fixed)",
+          approved == {}, str(approved))
+    check("bottleneck_status is always one of the two states a human can still "
+          "act on, never a terminal status",
+          result["bottleneck_status"] in (None, "pending", "pending_manager_approval"),
+          str(result["bottleneck_status"]))
+
+    r = client.get("/api/stats")
+    check("GET /api/stats includes cycle_time alongside sla, not instead of it",
+          r.status_code == 200 and "cycle_time" in r.json() and "sla" in r.json(),
+          str(r.json().get("cycle_time")))
+    print()
+
+    # ------------------------------------------------------- correction memory
+    print("Correction memory (write side -- see test_corrections.py for the read/prompt side)")
+    # trn-test-ovr's override, submitted earlier in "Payload validation"
+    # (override_field=agent_policy_id, POLICY-004 -> POLICY-007), should
+    # already have written a real correction via submit_review() -- not
+    # re-triggered here, just verified.
+    by_type = _corrections.load_corrections(_TEST_DATA_DIR)
+    check("submit_review()'s earlier override wrote a real correction to disk, "
+          "keyed by the case's matcher_exception_type", "missing_bank_reference" in by_type,
+          str(list(by_type.keys())))
+    first = by_type.get("missing_bank_reference", [{}])[0]
+    check("the written correction carries the real override field/values/reason",
+          first.get("override_field") == "agent_policy_id"
+          and first.get("override_old_value") == "POLICY-004"
+          and first.get("override_new_value") == "POLICY-007"
+          and "POLICY-007" in (first.get("reason") or ""),
+          str(first))
+
+    conn = _db.get_connection()
+    try:
+        insert_case(conn, "trn-test-corr2", 900.0, 1)
+        conn.commit()
+    finally:
+        conn.close()
+    review(client, "trn-test-corr2", reviewer_name="ana", reviewer_role="analyst",
+           decision="overridden", override_field="agent_exception_type",
+           override_old_value="missing_bank_reference", override_new_value="partial_refund",
+           notes="bank posting was actually found, this is really a refund")
+
+    by_type_after = _corrections.load_corrections(_TEST_DATA_DIR)
+    check("a second override on the SAME exception_type appends, doesn't replace",
+          len(by_type_after.get("missing_bank_reference", [])) == 2,
+          str(len(by_type_after.get("missing_bank_reference", []))))
+    block = _corrections.correction_block_for("missing_bank_reference", _TEST_DATA_DIR)
+    check("the prompt-ready block reflects the MOST RECENT of the two real corrections",
+          "bank posting was actually found" in block and "matcher's type maps to" not in block,
+          block)
+
+    conn = _db.get_connection()
+    try:
+        insert_case(conn, "trn-test-corr3", 900.0, 1)
+        conn.commit()
+    finally:
+        conn.close()
+    review(client, "trn-test-corr3", reviewer_name="ana", reviewer_role="analyst",
+           decision="approved", notes="looks right")
+    check("a plain approval (not an override) writes NO correction -- only "
+          "overrides represent a correction to the AI's classification",
+          "trn-test-corr3" not in [c.get("transaction_id") for v in
+                                     _corrections.load_corrections(_TEST_DATA_DIR).values() for c in v])
+    print()
+
+    # -------------------------------------------------------- run summary
+    print("Run summary (pre-computed file, served statically)")
+    r = client.get("/api/run-summary")
+    check("GET /api/run-summary returns 200 even with no file on disk yet",
+          r.status_code == 200, r.text[:200])
+    check("no run_summary.txt in this isolated test data dir -> generated: False, "
+          "not a 404 (a missing summary is a normal state, never an error)",
+          r.json() == {"generated": False, "summary": None}, str(r.json()))
+
+    with open(os.path.join(_TEST_DATA_DIR, "run_summary.txt"), "w", encoding="utf-8") as f:
+        f.write("[MOCK PROVIDER] A real pre-generated summary for this test.")
+    r = client.get("/api/run-summary")
+    check("once the file exists, it's served verbatim, with generated: True",
+          r.status_code == 200 and r.json() == {
+              "generated": True, "summary": "[MOCK PROVIDER] A real pre-generated summary for this test."},
+          str(r.json()))
+    print()
+
     # ------------------------------------------------------------- history
     print("Audit trail")
     r = client.get(f"/api/cases/{TIER2_TXN}")
@@ -490,7 +843,7 @@ def main() -> None:
     check("GET /api/stats returns 200", r.status_code == 200, r.text[:200])
     stats = r.json()
     check("stats count every seeded case",
-          stats["total_cases"] == 13, str(stats["total_cases"]))
+          stats["total_cases"] == 21, str(stats["total_cases"]))
     print()
 
     print("=" * 70)
@@ -499,6 +852,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import shutil as _shutil
     try:
         main()
     finally:
@@ -511,4 +865,5 @@ if __name__ == "__main__":
             )
         finally:
             _maint_conn.close()
+        _shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
     raise SystemExit(1 if _failed else 0)

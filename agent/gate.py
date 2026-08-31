@@ -27,6 +27,22 @@ inversion a financial control boundary must not allow.
       - sufficient_evidence == True (agent's own admission it had enough
         to go on -- a floor, not a proof of semantic correctness)
       - amount at risk < risk ceiling
+      - every evidence_used citation resolves to something the agent was
+        actually shown (a real EVIDENCE-N field or a real TOOL-N call) --
+        added after checking a peer repo's harder stance
+        (flare19/payment-reconciliation-agent-platform's grounding-gate.ts:
+        "a gate that fails open is worse than no gate, because it produces
+        confident-looking output that nobody re-checks") and verifying it
+        against this project's own real data: 0 of 18 recorded auto_resolve
+        investigations would have flipped under this condition -- every
+        real citation on record is already genuine, so this is a
+        forward-looking tightening, not a regression. A fabricated
+        citation is evidence the model's own account of its work is
+        unreliable, which matters most exactly here, the one place a
+        model's self-report (confidence, sufficient_evidence) is trusted
+        enough to authorize a financial action without a human. Real
+        production data is messier than this project's curated demo
+        dataset, which raises the odds of a genuine slip, not lowers it.
     Otherwise: ESCALATE, regardless of how confident the agent sounded
     or what it reclassified the case as.
 """
@@ -50,7 +66,7 @@ def is_investigation_worthwhile(report_row: dict) -> bool:
     could actually change apply_gate()'s final_decision below.
 
     This is deliberately the allowlist + risk-ceiling half of apply_gate()'s
-    six conditions, computed with ZERO LLM involvement, and callable BEFORE
+    seven conditions, computed with ZERO LLM involvement, and callable BEFORE
     any LLM call is made -- not a new gate, just the part of the existing
     gate logic that never needed a proposal in the first place. A case that
     fails this can still be auto_resolve-ineligible in every other way
@@ -127,22 +143,34 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
         reasons.append(f"amount at risk Rs.{amount_at_risk:,.2f} exceeds risk ceiling "
                         f"Rs.{config.AUTO_RESOLVE_RISK_CEILING_RUPEES:,.2f}")
 
+    # Computed here (not after auto_resolve, where it used to live purely
+    # informationally) so a fabricated citation can actually gate
+    # auto-resolve now, not just get flagged after the fact for a human to
+    # notice later. See this function's module docstring for why.
+    unknown_evidence_citations = validate_evidence_citations(resolution.evidence_used, extra_valid_evidence_ids)
+    citations_valid = len(unknown_evidence_citations) == 0
+    if not citations_valid:
+        reasons.append(f"agent cited evidence not actually shown to it: {unknown_evidence_citations} "
+                        f"-- a fabricated citation blocks auto-resolve, not just a human-visible flag")
+
     auto_resolve = (
         allowlisted and policy_permits and policy_id_consistent
         and confidence_ok and resolution.sufficient_evidence and risk_ok
+        and citations_valid
     )
 
     if auto_resolve:
         agent_status = "success"
         reasons = ["all gate conditions satisfied (matcher-authoritative type, "
-                   "allowlisted, policy_id consistent, confidence/evidence/risk all pass)"]
+                   "allowlisted, policy_id consistent, confidence/evidence/risk/citations all pass)"]
 
     # Structured, per-condition PASS/FAIL breakdown -- purely a presentation
-    # layer over the six booleans already computed above, not new gate logic.
-    # Additive only: `gate_reasons` above (free text) is unchanged and still
-    # what run_agent.py's categorize_reason(), test_gate.py, and
+    # layer over the seven booleans already computed above, not new gate
+    # logic on top of what auto_resolve already checked. `gate_reasons`
+    # above (free text) is unchanged in shape and still what
+    # run_agent.py's categorize_reason(), test_gate.py, and
     # seed_review_queue.py all depend on. This is a separate field so a UI
-    # can show "AI recommendation vs. system decision" as six explicit rows
+    # can show "AI recommendation vs. system decision" as explicit rows
     # instead of only a pass/fail reason list.
     gate_condition_checks = [
         {
@@ -182,15 +210,14 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
             "detail": f"Rs.{amount_at_risk:,.2f} {'<' if risk_ok else '>='} "
                       f"Rs.{config.AUTO_RESOLVE_RISK_CEILING_RUPEES:,.2f} ceiling",
         },
+        {
+            "name": "Evidence citations valid",
+            "passed": citations_valid,
+            "detail": ("every cited EVIDENCE-N/TOOL-N id resolves to something the agent "
+                       "was actually shown" if citations_valid
+                       else f"fabricated/unrecognized citation(s): {unknown_evidence_citations}"),
+        },
     ]
-
-    # Informational only -- does NOT change auto_resolve above, which stays
-    # exactly the 6 conditions it always was. Surfaces when the model cites
-    # an evidence field it was never actually shown, so a human reviewer can
-    # see a hallucinated citation instead of trusting evidence_used at face
-    # value. Turning this into an actual 7th gate condition would be a real,
-    # deliberate change to auto-resolve eligibility -- not done here.
-    unknown_evidence_citations = validate_evidence_citations(resolution.evidence_used, extra_valid_evidence_ids)
 
     return {
         "final_decision": "auto_resolve" if auto_resolve else "escalate",

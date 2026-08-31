@@ -182,7 +182,7 @@ def print_report(scored: pd.DataFrame, missing: list, target_n: int) -> None:
     print("are directly comparable.")
     if (scored["gate_decision"] == "auto_resolve").any():
         print()
-        print("Cases the gate actually auto-resolved (all 6 conditions held simultaneously):")
+        print("Cases the gate actually auto-resolved (all 7 conditions held simultaneously):")
         print(scored[scored["gate_decision"] == "auto_resolve"]
               [["transaction_id", "matcher_exception_type", "confidence"]].to_string(index=False))
 

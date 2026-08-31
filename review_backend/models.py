@@ -65,7 +65,50 @@ class ReviewSubmission(BaseModel):
         return self
 
 
+class BulkReviewRequest(BaseModel):
+    """Applies ONE review decision to a whole set of cases at once -- the
+    review-side counterpart to matching/root_cause.py's clustering: a
+    reviewer who trusts a cluster's diagnosis can act on it as one thing
+    instead of clicking through every case in it individually.
+
+    Deliberately restricted to {"approved", "escalated"} -- NOT "overridden"
+    or "reverted". An override requires confirming the CURRENT value of a
+    specific field per case (state_machine.py's stale-override guard), which
+    is exactly the kind of per-case attention a bulk action should not skip;
+    "reverted" only ever applies to a single already-auto_resolved case, not
+    a cluster of escalated ones. "auto_closed" is reserved for the
+    closed-loop re-verification job's own decision (see POST /api/reverify)
+    and is never submitted by a human, bulk or otherwise.
+
+    Every case in the set may still land in a DIFFERENT resulting status --
+    a tier-1 case goes straight to "approved," a tier-2 case to
+    "pending_manager_approval" -- because tier is a per-case property
+    (amount-based), and this endpoint does not change that per-case logic
+    at all; it just calls the existing single-case review path once per
+    transaction_id.
+    """
+    transaction_ids: list[str] = Field(min_length=1, max_length=500)
+    reviewer_name: str = Field(min_length=1, max_length=200)
+    reviewer_role: Literal["analyst", "manager"]
+    decision: Literal["approved", "escalated"]
+    notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _cross_field_rules(self):
+        if self.decision == "escalated" and (not self.notes or not self.notes.strip()):
+            raise ValueError("escalation requires a non-empty reason in notes")
+        if len(set(self.transaction_ids)) != len(self.transaction_ids):
+            raise ValueError("transaction_ids contains duplicates")
+        return self
+
+
 class ReverificationRequest(BaseModel):
     """Body for POST /api/reverify. dry_run=True previews which cases would
     be auto-closed without writing anything."""
     dry_run: bool = False
+
+
+class QARequest(BaseModel):
+    """Body for POST /api/qa (qa_agent/, the Settlement Q&A agent)."""
+    question: str = Field(min_length=1, max_length=1000)
+    model: Optional[str] = None

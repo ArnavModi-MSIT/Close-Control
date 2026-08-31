@@ -116,6 +116,33 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_loan_recovery_schedule",
+            "description": (
+                "Check Razorpay Capital's recovery ledger for this transaction. A settlement "
+                "can credit LESS than expected because a contracted working-capital advance "
+                "deducted its agreed percentage -- money collected, not money missing. Use "
+                "this whenever a shortfall or a negative adjustment needs explaining, before "
+                "concluding it is an unexplained shortage or a refund. Read three fields "
+                "carefully and do not conflate them: merchant_has_active_advance (this "
+                "merchant borrows at all), recovery_found_for_this_transaction (a recovery "
+                "was booked against THIS settlement -- an advance alone explains nothing), "
+                "and reconciles_delta (the recovery accounts for the shortfall IN FULL). "
+                "Only when reconciles_delta is true is the shortfall explained; if it is "
+                "false, residual_after_recovery_rupees is genuinely unexplained and the case "
+                "must escalate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transaction_id": {"type": "string", "description": "The case's own transaction_id."},
+                },
+                "required": ["transaction_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "compute_delta",
             "description": (
                 "Subtract b from a. This is the ONLY way to do arithmetic during this "

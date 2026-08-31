@@ -141,6 +141,27 @@ def main():
     detail.to_csv(out_csv, index=False)
     print(f"\nPer-case detail written to: {out_csv}")
 
+    # Guard the ablation's own conclusion, not just its preconditions. The
+    # mock-provider check at the top of main() already refuses to run when
+    # RAG-ON and RAG-OFF would be identical BY CONSTRUCTION; this catches the
+    # same vacuity arriving from the other direction -- a real provider that
+    # happens to cite correctly without retrieval. If that ever holds, the
+    # headline "retrieval grounding is what makes citations correct" claim is
+    # not supported by this run, and the run should say so loudly rather than
+    # writing a CSV that looks like evidence.
+    on_correct = rag_on["policy_id_consistent"].mean()
+    off_correct = rag_off["policy_id_consistent"].mean()
+    if on_correct <= off_correct:
+        print()
+        print("=" * 70)
+        print(f"ASSERTION FAILED: RAG-ON policy-citation accuracy ({on_correct:.1%}) is not "
+              f"better than RAG-OFF ({off_correct:.1%}).")
+        print("This ablation therefore does NOT demonstrate that retrieval grounding")
+        print("improves citation correctness -- do not quote it as evidence until the")
+        print("cause is understood (model change, prompt change, or too small a sample).")
+        print("=" * 70)
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()

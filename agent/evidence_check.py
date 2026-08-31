@@ -22,6 +22,19 @@ REQUIRED_EVIDENCE = {
     "ambiguous_bank_match": ["settlement_id", "match_status"],
     "timing_lag_beyond_t2": ["settlement_id"],
     "duplicate_retry": [],
+    # Found missing by an external review pass, verified before fixing:
+    # neither type is currently exploitable through this gap (chargeback_received
+    # is blocked from auto-resolve by POLICY-012's own auto_resolvable=False
+    # regardless of evidence; loan_recovery_deduction never reaches this
+    # function at all, since it's always matcher-level auto_resolve_eligible=True
+    # and therefore excluded from the escalated set agent/investigator ever see).
+    # Added anyway for defense-in-depth -- the exact "silently degrade to
+    # permissive when a dict lookup misses" pattern this project's own
+    # REQUIRED_EVIDENCE mechanism exists to prevent everywhere else, and cheap
+    # insurance against either invariant ever changing.
+    "chargeback_received": ["transaction_id", "all_signals"],
+    "loan_recovery_deduction": ["net_delta_rupees", "ledger_expected_net_rupees",
+                                  "observed_net_rupees"],
 }
 
 

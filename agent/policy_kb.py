@@ -8,6 +8,32 @@ auto_resolvable here means "the policy, in principle, permits an
 autonomous system to resolve this type" -- the actual auto-resolve
 decision is still gated by confidence + risk ceiling in gate.py. This
 field alone never authorizes anything.
+
+POLICY-007 and POLICY-009's resolution_action text cites real RBI/NPCI
+regulatory frameworks (not invented), added after checking each claim
+against actual circulars/SOPs rather than trusting a generic web summary:
+  - RBI's Harmonisation of TAT and Customer Compensation for Failed
+    Transactions circular (20.09.2019): T+5 business days is the outer
+    auto-reversal bound for a failed/short transaction, with Rs.100/day
+    compensation owed automatically (suo moto, no customer complaint
+    needed) past that.
+  - RBI's DGBA.GBD circular (02.08.2021) on recovery of interest on
+    excess put-through/double-claim government transactions: an excess
+    or duplicate payment accrues penal interest for every day it's held
+    -- amount x days-held x rate / 365 -- calculated from the day after
+    the T+5 put-through deadline until actual reversal. Confirmed via a
+    real government treasury-reconciliation SOP's own worked example
+    (Working Sheet -- Penal Interest), which independently uses the same
+    T+5 deadline as the RBI TAT circular above -- two separate sources
+    agreeing on the same number, not one claim taken on faith.
+  - NPCI's URCS (UPI Reconciliation and Chargeback System) gives
+    customers a 45-day window to raise a dispute and independently
+    flags duplicate adjustments (by transaction ID/amount) before a
+    chargeback is even accepted.
+These are real regulatory anchors for what "escalate" should actually
+mean operationally, not just a generic instruction -- but they don't
+change auto_resolvable/risk_class here, since those still come from
+this project's own deterministic gate design, not from citing a circular.
 """
 
 POLICY_KB = {
@@ -86,7 +112,11 @@ POLICY_KB = {
                           "break requiring investigation.",
         "resolution_action": "Escalate to finance ops with the exact shortfall amount. "
                               "Do not assume a cause without evidence -- request the bank's "
-                              "detailed settlement breakdown.",
+                              "detailed settlement breakdown. RBI's harmonised TAT framework "
+                              "for failed/short transactions sets T+5 business days as the "
+                              "outer resolution bound, with Rs.100/day compensation owed "
+                              "automatically past that -- treat T+5 as the hard escalation "
+                              "deadline, not an arbitrary one.",
         "auto_resolvable": False,
         "risk_class": "high",
     },
@@ -108,6 +138,11 @@ POLICY_KB = {
         "typical_cause": "Customer double-submitted, or a client-side retry bypassed "
                           "idempotency protection.",
         "resolution_action": "Escalate immediately for a refund of the duplicate charge. "
+                              "RBI's framework for excess/double-claim payments (DGBA.GBD "
+                              "circular, recovery of interest on excess put-through) treats "
+                              "the holding period as penal-interest-bearing -- amount x days "
+                              "held x rate / 365 from T+5 until reversed -- a real, "
+                              "escalating-cost liability, not just a customer-service issue. "
                               "High customer-impact issue -- do not auto-resolve.",
         "auto_resolvable": False,
         "risk_class": "high",
@@ -121,6 +156,53 @@ POLICY_KB = {
                               "amount or status claims from an unverified payment.",
         "auto_resolvable": False,
         "risk_class": "high",
+    },
+    "chargeback_received": {
+        "policy_id": "POLICY-012",
+        "description": "The customer's issuing bank has raised a dispute and pulled the "
+                        "funds back from the merchant -- money that already settled is "
+                        "being reversed, not merely adjusted.",
+        "typical_cause": "Customer-initiated dispute (goods not received, unauthorized "
+                          "transaction, duplicate charge), raised through the issuer and "
+                          "routed via NPCI's URCS.",
+        "resolution_action": "Never auto-resolve; never net against the original settlement. "
+                              "Route to the disputes team with the transaction evidence bundle "
+                              "before the representment deadline. NPCI's URCS gives the "
+                              "customer a 45-day window to raise the dispute and independently "
+                              "screens duplicate adjustments before accepting one, so verify "
+                              "against URCS rather than trusting the debit in isolation -- a "
+                              "chargeback and the refund it may duplicate are two different "
+                              "debits for the same underlying transaction.",
+        "auto_resolvable": False,
+        "risk_class": "high",
+    },
+    "loan_recovery_deduction": {
+        "policy_id": "POLICY-013",
+        "description": "The settlement credited less than the ledger expected because a "
+                        "contracted Razorpay Capital advance was repaid by deducting an "
+                        "agreed percentage of this settlement. The shortfall is a "
+                        "collection, not a loss -- but only when Capital's recovery "
+                        "ledger accounts for the delta in full.",
+        "typical_cause": "An active working-capital advance whose repayment terms collect "
+                          "a fixed share of each settlement, applied by Capital after the "
+                          "settlement ledger had already booked the pre-recovery net.",
+        "resolution_action": "Auto-resolve ONLY when a recovery record exists for this "
+                              "transaction and its amount reconciles the observed delta "
+                              "exactly; a recovery that explains only part of the gap "
+                              "leaves a genuinely unexplained residual and must escalate. "
+                              "RBI's Guidelines on Digital Lending (02.09.2022) require "
+                              "loan repayments to move directly between the borrower and "
+                              "the regulated lending entity's accounts, with no "
+                              "pass-through or pool account held by a lending service "
+                              "provider -- so confirm the recovery is booked against the "
+                              "lender's account rather than retained in an aggregator "
+                              "float. The deduction must also match the rate disclosed in "
+                              "the Key Fact Statement and the Fair Practices Code "
+                              "disclosure the merchant accepted; an undisclosed or "
+                              "off-schedule deduction is a compliance exception, not a "
+                              "reconciliation one.",
+        "auto_resolvable": True,
+        "risk_class": "low",
     },
     "ambiguous_bank_match": {
         "policy_id": "POLICY-011",

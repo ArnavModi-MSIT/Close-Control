@@ -13,6 +13,12 @@ import datetime as dt
 
 import pandas as pd
 
+# Imported directly rather than re-declared here so the investigator can
+# never disagree with the matcher about what "the recovery reconciles the
+# delta" means -- same single-source-of-truth discipline as ingestion/
+# importing AMOUNT_BLOCK_TOLERANCE_PCT instead of hand-copying 1.5.
+from matching.config import EXACT_MATCH_TOLERANCE_RUPEES
+
 from . import config
 
 
@@ -22,9 +28,26 @@ class ToolContext:
     matcher report + sources every other script in this project uses."""
 
     def __init__(self, report: pd.DataFrame, gateway: pd.DataFrame, bank: pd.DataFrame,
-                 settlement_matches: pd.DataFrame | None = None):
+                 settlement_matches: pd.DataFrame | None = None,
+                 loan_book: pd.DataFrame | None = None):
         self.report = report
         self.bank = bank
+        # The raw, non-deduplicated gateway frame, kept alongside
+        # gateway_primary below -- cash_position/engine.py's
+        # build_cash_position() needs the full frame (it does its own
+        # dedup internally via _primary_gateway_dates()), which
+        # gateway_primary's already-deduped, already-reindexed shape can't
+        # substitute for. Added for qa_agent/'s get_cash_position_summary()
+        # tool, which reuses this same ToolContext rather than duplicating
+        # its derivation logic.
+        self.gateway = gateway
+        # The fourth source (Razorpay Capital's recovery ledger), consulted
+        # by get_loan_recovery_schedule(). Optional for the same reason
+        # settlement_matches is: ToolContext stays constructible in isolation
+        # for tests, and a dataset generated before this source existed still
+        # works -- the tool reports loan_book_available: False rather than
+        # failing, which is a true and useful answer, not a silent skip.
+        self.loan_book = loan_book
         successful = gateway[gateway["attempt_status"] == "success"]
         primary = successful.drop_duplicates("transaction_id_ref", keep="first").set_index("transaction_id_ref")
         self.captured_date_by_txn = primary["captured_at"].dt.date.to_dict()
@@ -87,8 +110,24 @@ def get_transaction_details(ctx: ToolContext, transaction_id: str) -> dict:
         "signature_valid": bool(gw["signature_valid"]),
         "refund_id": gw["refund_id"] if pd.notna(gw["refund_id"]) else None,
         "refund_reason": gw["refund_reason"] if pd.notna(gw["refund_reason"]) else None,
-        "matcher_exception_type": report_row["final_exception_type"] if report_row is not None else None,
-        "matcher_risk_class": report_row["risk_class"] if report_row is not None else None,
+        # Guarded the same way as the three optional fields above, though not
+        # currently reachable via any real caller: ctx.report is always the
+        # in-process DataFrame from run_matcher.run() (never CSV-reloaded),
+        # so a clean transaction's final_exception_type is genuinely Python
+        # None here, not the float NaN it becomes after a CSV round-trip
+        # (verified directly: json.dumps() on this dict already succeeds
+        # today). Added anyway, defense-in-depth, matching json_safe()'s own
+        # stated purpose (protect against ANY tool leaking a stray NaN, not
+        # just the one field that already caused a real incident) -- found
+        # via external review.
+        "matcher_exception_type": (
+            report_row["final_exception_type"] if report_row is not None and pd.notna(report_row["final_exception_type"])
+            else None
+        ),
+        "matcher_risk_class": (
+            report_row["risk_class"] if report_row is not None and pd.notna(report_row["risk_class"])
+            else None
+        ),
     }
 
 
@@ -119,7 +158,22 @@ def get_settlement_details(ctx: ToolContext, settlement_id: str) -> dict:
             "match_pass": sm["match_pass"],
             "expected_total_rupees": sm["expected_total_rupees"],
             "matched_bank_txn_ids": sm["matched_bank_txn_ids"],
-            "matched_utrs": sm["matched_utrs"],
+            # A bank posting with no UTR at all is real, correct data --
+            # it's exactly what makes a missing_bank_reference case what it
+            # is -- but pandas represents that missing value as a raw float
+            # NaN, not None, and NaN is not valid JSON (found live: a real
+            # 500 on GET /api/cases/trn-000070, whose matched settlement's
+            # one posting genuinely has no UTR; Starlette's JSONResponse
+            # sets allow_nan=False and correctly refuses to emit non-
+            # compliant JSON once this list reached serialization, several
+            # layers downstream of where it was first produced -- by then
+            # already written into investigation_log.jsonl AND persisted
+            # into Postgres). Sanitized at the exact point this project
+            # already sanitizes every OTHER optional field in this same
+            # function (pd.notna(...) else None) -- same principle, just
+            # applied per-element since this one field is a list, not a
+            # scalar.
+            "matched_utrs": [None if pd.isna(u) else u for u in sm["matched_utrs"]],
             "matched_total_rupees": sm["matched_total_rupees"],
             "amount_delta_rupees": sm["amount_delta_rupees"],
             "match_confidence": sm["confidence"],
@@ -258,11 +312,89 @@ def compute_delta(ctx: ToolContext, a: float, b: float) -> dict:
     return {"a_minus_b": round(a - b, 2)}
 
 
+def get_loan_recovery_schedule(ctx: ToolContext, transaction_id: str) -> dict:
+    """Look this transaction up in Razorpay Capital's recovery ledger --
+    the fourth source. A settlement can credit less than the ledger
+    expected because a contracted working-capital advance took its agreed
+    cut, which is a collection rather than a loss.
+
+    Deliberately answers THREE separate questions, because conflating them
+    is exactly how a shortfall gets waved through incorrectly:
+      1. does this merchant carry an active advance at all?
+      2. is there a recovery booked against THIS transaction?
+      3. does that recovery amount actually account for the full observed
+         delta, or only part of it?
+
+    (3) is computed here in Python, never left to the model -- a recovery
+    that explains only part of a gap leaves a genuinely unexplained
+    residual, and `reconciles_delta: false` is the signal that the case
+    must still escalate. Mirrors matching/ledger_check.py's own rule
+    exactly, so the investigation cannot reach a verdict the deterministic
+    matcher would disagree with.
+    """
+    if ctx.loan_book is None or len(ctx.loan_book) == 0:
+        return {"transaction_id": transaction_id, "loan_book_available": False,
+                "note": "No Razorpay Capital recovery ledger is loaded for this dataset."}
+
+    merchant_id = ctx.merchant_by_txn.get(transaction_id)
+    merchant_loans = ctx.loan_book[ctx.loan_book["merchant_id"] == merchant_id]
+    row = ctx.loan_book[ctx.loan_book["transaction_id"] == transaction_id]
+
+    out = {
+        "transaction_id": transaction_id,
+        "loan_book_available": True,
+        "merchant_id": merchant_id,
+        "merchant_has_active_advance": bool(len(merchant_loans)),
+        "merchant_recovery_count": int(len(merchant_loans)),
+        "recovery_found_for_this_transaction": bool(len(row)),
+    }
+    if not len(row):
+        out["note"] = ("No recovery is booked against this transaction. A shortfall here "
+                        "is NOT explained by loan recovery, even if this merchant has an "
+                        "advance -- do not treat the advance itself as the explanation.")
+        return out
+
+    rec = row.iloc[0]
+    recovery_amount = round(float(rec["recovery_amount_rupees"]), 2)
+    out.update({
+        "recovery_id": rec["recovery_id"],
+        "loan_id": rec["loan_id"],
+        "loan_principal_rupees": float(rec["loan_principal_rupees"]),
+        "recovery_rate_pct": float(rec["recovery_rate_pct"]),
+        "recovery_amount_rupees": recovery_amount,
+        "recovery_date": str(rec["recovery_date"]),
+        "recovery_method": rec["recovery_method"],
+        "status": rec["status"],
+    })
+
+    # Does the recovery actually reconcile the gap? Same arithmetic and same
+    # tolerance matching/ledger_check.py applies.
+    rep = ctx.report[ctx.report["transaction_id"] == transaction_id]
+    if len(rep) and pd.notna(rep.iloc[0].get("net_delta_rupees")):
+        net_delta = round(float(rep.iloc[0]["net_delta_rupees"]), 2)
+        residual = round(net_delta + recovery_amount, 2)
+        reconciles = abs(residual) <= EXACT_MATCH_TOLERANCE_RUPEES
+        out.update({
+            "observed_net_delta_rupees": net_delta,
+            "residual_after_recovery_rupees": residual,
+            "reconciles_delta": bool(reconciles),
+            "note": ("The recovery fully accounts for the observed shortfall -- this is a "
+                      "contracted collection, not missing money."
+                      if reconciles else
+                      f"The recovery does NOT fully account for the shortfall: "
+                      f"Rs.{abs(residual):,.2f} remains unexplained after it. This case "
+                      f"must still escalate; a partially-explaining record never launders "
+                      f"the rest of the gap into an auto-resolve."),
+        })
+    return out
+
+
 TOOLS = {
     "get_transaction_details": get_transaction_details,
     "get_settlement_details": get_settlement_details,
     "calculate_settlement_variance": calculate_settlement_variance,
     "lookup_related_transactions": lookup_related_transactions,
     "search_bank_statement": search_bank_statement,
+    "get_loan_recovery_schedule": get_loan_recovery_schedule,
     "compute_delta": compute_delta,
 }

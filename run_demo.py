@@ -96,6 +96,26 @@ def check_environment() -> None:
         fail(f"can't reach the review queue's Postgres database: {e}",
              "docker compose -f postgres/docker-compose.yaml up -d")
 
+    # Redis is deliberately NOT a hard dependency -- cache.py degrades to
+    # computing directly on any error, and this must never fail() the way
+    # Postgres above does. But "silently slower" turned out to be genuinely
+    # invisible: measured, /api/stats goes 33.9ms -> 2,029.8ms and
+    # /api/reconciliation-statement 11.4ms -> 3,617.4ms with Redis stopped,
+    # because both re-run the full matcher. The frontend polls /api/stats
+    # every 3s, so a stopped Redis just makes the dashboard feel broken with
+    # no stated cause. A warning (never a failure) keeps the no-hard-dependency
+    # principle while making the cost visible.
+    try:
+        from review_backend import cache as review_cache
+        review_cache._client.ping()
+        print("Redis:       reachable (dashboard endpoints cached)")
+    except Exception:  # noqa: BLE001 -- optional by design, never fatal
+        print("Redis:       [warn] not reachable -- everything still works, but "
+              "/api/stats and the")
+        print("             reconciliation statement recompute the full matcher on every "
+              "poll (~2-4s each).")
+        print("             Start it with: docker compose -f redis/docker-compose.yaml up -d")
+
     missing = [f for f in REQUIRED_DATA if not os.path.exists(os.path.join(DATA_DIR, f))]
     if missing:
         fail(f"missing generated data: {', '.join(missing)}",
@@ -238,12 +258,12 @@ def send_live_case(port_hint: int, transaction_id: str | None = None) -> None:
              "confirm `ollama list` shows the model, then re-run with --live-case")
 
     from run_matcher import run as run_matcher
-    from matching.loaders import load_sources
+    from matching.loaders import load_sources, load_loan_book
     from agent.policy_kb import get_policy
     from agent.evidence import build_evidence, build_policy_block
     from agent.gate import apply_gate
     from investigator.tools import ToolContext
-    from investigator.loop import investigate, tool_evidence_ids
+    from investigator.loop import investigate, tool_evidence_ids, json_safe
     from investigator.ollama_client import OllamaToolClient
     from run_investigator import print_case_trace, LOG_PATH as INVESTIGATION_LOG_PATH
     import datetime as dt
@@ -267,7 +287,8 @@ def send_live_case(port_hint: int, transaction_id: str | None = None) -> None:
         policy_block = "[NO MATCHING POLICY FOUND -- treat as insufficient evidence.]"
     evidence_block = build_evidence(row_dict)
 
-    ctx = ToolContext(report, gateway, bank, settlement_matches)
+    ctx = ToolContext(report, gateway, bank, settlement_matches,
+                       loan_book=load_loan_book(DATA_DIR))
     client = OllamaToolClient()
     result = investigate(row_dict, policy_block, evidence_block, ctx, client)
     gate_result = apply_gate(result, row_dict, tool_evidence_ids(result))
@@ -280,7 +301,7 @@ def send_live_case(port_hint: int, transaction_id: str | None = None) -> None:
              "model": client.model,
              "investigated_at": dt.datetime.now(dt.timezone.utc).isoformat()}
     with open(INVESTIGATION_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
+        f.write(json.dumps(json_safe(entry), default=str) + "\n")
     print(f"Appended to {INVESTIGATION_LOG_PATH}")
 
     from seed_review_queue import seed

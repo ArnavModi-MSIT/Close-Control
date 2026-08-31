@@ -30,6 +30,12 @@ from matching.blocking import bank_account_for_merchant
 from matching.ledger_check import check_ledger_vs_gateway
 from matching.report import build_report
 from run_matcher import run as run_full_matcher
+# Delegates to evaluate.py's own load_ground_truth() rather than a second,
+# independently-hand-copied pd.read_csv(".../ground_truth.csv") -- this is
+# not a second reader, it's the SAME sanctioned reader, reused, so
+# test_ground_truth_isolation.py's static scan only has one real read call
+# to allowlist, not two that could silently drift apart.
+from evaluate import load_ground_truth
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 NAIVE_AMOUNT_TOLERANCE_RUPEES = 0.02  # same paisa-rounding-only definition of "exact" the real engine uses
@@ -124,7 +130,7 @@ def score(report: pd.DataFrame, gt: pd.DataFrame) -> dict:
 
 
 def main():
-    gt = pd.read_csv(f"{DATA_DIR}/ground_truth.csv")
+    gt = load_ground_truth()
 
     print("=" * 70)
     print("BASELINE A: NAIVE RECONCILIATION")
@@ -174,10 +180,36 @@ def main():
     print(f"{'settlements matched':<42}{naive_matched:>13}/{len(naive_matches)}{full_matched:>10}/{len(full_settlement_matches)}")
     print()
     print("The naive baseline's settlement match count directly quantifies what the")
-    print("blocking window, shortage/overage tolerance, and split-settlement passes")
-    print("in matching/engine.py actually buy -- every settlement it misses that the")
-    print("full system catches is a real transaction that would have sat unexplained")
-    print("under exact-date, exact-amount, 1:1-only matching.")
+    print("blocking window and split-settlement passes in matching/engine.py actually")
+    print("buy -- every settlement it misses that the full system catches is a real")
+    print("transaction that would have sat unexplained under exact-date, exact-amount,")
+    print("1:1-only matching.")
+    print()
+    print("Deliberately NOT credited here: the shortage/overage-tolerance passes.")
+    print("They contribute nothing to this gap because they never fire on the curated")
+    print("dataset -- every bank posting equals its settlement total exactly, so the")
+    print("only passes that ever run are exact, split, and the ambiguity escalations")
+    print("(verify with evaluate.py's match-pass distribution). Those two passes are")
+    print("real and proven, just by test_ambiguity.py's scenarios 8 and 9 rather than")
+    print("by this dataset -- claiming them here would overstate what's measured.")
+
+    # Guard against this whole comparison going quietly vacuous. If a future
+    # data-generation change made the naive matcher just as good, every claim
+    # above would silently become meaningless while still printing happily.
+    # Idea borrowed from a Snowflake cost-attribution project that gates its
+    # build on "naive must strictly underreport" for exactly this reason --
+    # a demo dataset that stops being adversarial is a real, silent failure.
+    if naive_matched >= full_matched:
+        print()
+        print("=" * 70)
+        print("ASSERTION FAILED: the naive baseline matched "
+              f"{naive_matched}/{len(naive_matches)} settlements, which is NOT worse")
+        print(f"than the full system's {full_matched}/{len(full_settlement_matches)}.")
+        print("Either the matcher regressed, or the dataset stopped exercising the")
+        print("blocking/split logic -- in which case every 'why the multi-pass matcher")
+        print("matters' claim in this project is currently unsupported by its own data.")
+        print("=" * 70)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

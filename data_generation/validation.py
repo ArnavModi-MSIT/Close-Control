@@ -6,7 +6,107 @@ import pandas as pd
 from . import config
 
 
-def validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df, hard_negative_pairs=None):
+def _validate_loan_recoveries(gateway_df, ledger_df, loan_book_df, errors):
+    """Anti-vacuity guard, same class as the hard-negative confusability
+    check below: a loan recovery only demonstrates anything if it actually
+    RECONCILES the shortfall it created.
+
+    If the generator ever drifted so a recovery's amount stopped matching
+    the gateway adjustment it represents, all of them would silently
+    reclassify as unexplained_shortage. Every existing assertion would
+    still pass, generation would still print happily, and the headline
+    "18 recoveries auto-resolved, precision 1.0" would quietly be
+    measuring nothing at all -- the exact failure mode this project's
+    other anti-vacuity guards exist to catch.
+    """
+    if loan_book_df is None or not len(loan_book_df):
+        return
+
+    gw = gateway_df.set_index("transaction_id_ref")
+    led = ledger_df.set_index("transaction_id")
+    for _, rec in loan_book_df.iterrows():
+        txn = rec["transaction_id"]
+        if txn not in gw.index or txn not in led.index:
+            errors.append(f"Loan recovery {rec['recovery_id']} references {txn}, "
+                           f"which is missing from the gateway or ledger source.")
+            continue
+        recovery = round(float(rec["recovery_amount_rupees"]), 2)
+        # The gateway books the recovery as a negative adjustment (in paise).
+        adjustment = round(float(gw.loc[txn, "adjustment_paise"]) / 100.0, 2)
+        if abs(adjustment + recovery) > 0.02:
+            errors.append(f"Loan recovery {rec['recovery_id']} ({txn}): recovery "
+                           f"Rs.{recovery:,.2f} does not match the gateway's booked "
+                           f"adjustment Rs.{adjustment:,.2f} -- the recovery would no "
+                           f"longer reconcile the shortfall it created.")
+        # And the shortfall must be real: the ledger has to expect MORE than
+        # the gateway settled, or there is nothing for the recovery to explain.
+        expected_net = round(float(led.loc[txn, "expected_net_settlement_rupees"]), 2)
+        observed_net = round(float(gw.loc[txn, "settlement_amount_paise"]) / 100.0, 2)
+        if expected_net - observed_net <= 0:
+            errors.append(f"Loan recovery {rec['recovery_id']} ({txn}) creates no shortfall "
+                           f"(ledger expects Rs.{expected_net:,.2f}, gateway settled "
+                           f"Rs.{observed_net:,.2f}) -- nothing for the recovery to explain, "
+                           f"so this case proves nothing.")
+
+
+def _validate_chargebacks(gateway_df, ledger_df, bank_df, gt_df, errors):
+    """Anti-vacuity guard, same class as _validate_loan_recoveries() above:
+    a chargeback only demonstrates anything if the clawback actually
+    creates the "bank ties out with the post-clawback net, ledger still
+    expects the pre-clawback net" gap chargeback_received exists to
+    explain -- not just a row tagged with a chargeback_id.
+
+    Found missing by an external review pass: matching/ledger_check.py
+    classifies off chargeback_id presence, not off the arithmetic, so if
+    the generator ever drifted (clawback zeroed, doubled, or no longer
+    reconciling), every chargeback would still carry a chargeback_id and
+    still classify as chargeback_received -- every existing check would
+    keep passing, and the headline "14 chargebacks, precision/recall 1.0"
+    would quietly stop meaning anything. Same blind spot
+    _validate_loan_recoveries() already closes on the loan-recovery side.
+    """
+    cb_gw = gateway_df[gateway_df["chargeback_id"].notna()]
+    if not len(cb_gw):
+        return
+    led = ledger_df.set_index("transaction_id")
+    gt_by_txn = gt_df.set_index("transaction_id")
+    bank_by_posting = bank_df.set_index("settlement_posting_id")["credit_amount_rupees"]
+    for _, row in cb_gw.iterrows():
+        txn = row["transaction_id_ref"]
+        cb_id = row["chargeback_id"]
+        if txn not in led.index or txn not in gt_by_txn.index:
+            errors.append(f"Chargeback {cb_id} ({txn}) is missing from the ledger or ground truth.")
+            continue
+        posting_id = gt_by_txn.loc[txn, "settlement_posting_id"]
+        if posting_id not in bank_by_posting.index:
+            errors.append(f"Chargeback {cb_id} ({txn}): no bank posting found for "
+                           f"settlement_posting_id {posting_id}.")
+            continue
+        bank_amount = round(float(bank_by_posting.loc[posting_id]), 2)
+        gateway_net_after = round(float(row["settlement_amount_paise"]) / 100.0, 2)
+        if abs(bank_amount - gateway_net_after) > 0.02:
+            errors.append(f"Chargeback {cb_id} ({txn}): bank posting (Rs.{bank_amount:,.2f}) does "
+                           f"not match the gateway's post-clawback net (Rs.{gateway_net_after:,.2f}) "
+                           f"-- the settlement itself should still tie out exactly; only the "
+                           f"ledger comparison should be off.")
+        expected_net = round(float(led.loc[txn, "expected_net_settlement_rupees"]), 2)
+        if expected_net - gateway_net_after <= 0:
+            errors.append(f"Chargeback {cb_id} ({txn}) creates no shortfall (ledger expects "
+                           f"Rs.{expected_net:,.2f}, gateway settled Rs.{gateway_net_after:,.2f}) "
+                           f"-- nothing for chargeback_received to explain.")
+        # net_original (== expected_net, booked before the dispute) + the
+        # clawback adjustment must equal what the gateway actually settled
+        # -- the fundamental arithmetic invariant, independent of whatever
+        # discount factor chargebacks.py currently uses to compute it.
+        adjustment = round(float(row["adjustment_paise"]) / 100.0, 2)
+        if abs(expected_net + adjustment - gateway_net_after) > 0.02:
+            errors.append(f"Chargeback {cb_id} ({txn}): expected net (Rs.{expected_net:,.2f}) + "
+                           f"adjustment (Rs.{adjustment:,.2f}) != gateway's post-clawback net "
+                           f"(Rs.{gateway_net_after:,.2f}) -- the clawback arithmetic doesn't add up.")
+
+
+def validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df, hard_negative_pairs=None,
+                      loan_book_df=None):
     errors = []
 
     # --- numeric dtype checks (catches corrupted-join bugs like stringified Series) ---
@@ -91,6 +191,45 @@ def validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df, hard_negat
         if hn_txn_ids.duplicated().any():
             errors.append("A hard-negative pair collapsed to a duplicate transaction_id after joins.")
 
+        # --- are the hard negatives still actually HARD? ---
+        # Count + distinctness (above) say the pairs exist and didn't merge.
+        # Neither says they're confusable. A "hard negative" only earns the
+        # name if the two payments are genuinely indistinguishable from
+        # merchant + amount + date evidence alone -- that's the whole reason
+        # the matcher is allowed to escalate them instead of picking one.
+        # If the generator ever drifted so a pair had different amounts or
+        # different merchants, the pair would be trivially separable, the
+        # headline "40/40 hard negatives handled" would be measuring nothing,
+        # and every existing check here would still pass silently.
+        hn_ids = set(hn_txn_ids)
+        hn_gw = gateway_df[gateway_df["transaction_id_ref"].isin(hn_ids)
+                            & (gateway_df["attempt_status"] == "success")]
+        # trn-hn007-0 / trn-hn007-1 -> pair key trn-hn007
+        pair_keys = hn_gw["transaction_id_ref"].str.rsplit("-", n=1).str[0]
+        for pair_key, grp in hn_gw.groupby(pair_keys):
+            if len(grp) != 2:
+                errors.append(f"Hard-negative pair {pair_key} has {len(grp)} successful gateway "
+                               f"row(s), expected exactly 2.")
+                continue
+            if grp["merchant_id"].nunique() != 1:
+                errors.append(f"Hard-negative pair {pair_key} spans two merchants -- trivially "
+                               f"separable by merchant, so not a hard negative at all.")
+            if grp["payment_amount_paise"].nunique() != 1:
+                errors.append(f"Hard-negative pair {pair_key} has two different amounts "
+                               f"({sorted(grp['payment_amount_paise'].unique())}) -- trivially "
+                               f"separable by amount, so not a hard negative at all.")
+            # Same-day-and-close-together is what makes the date window
+            # useless as a discriminator; generator draws 2-15 minutes apart.
+            # captured_at is a unix int in the in-memory frame this function
+            # is normally called with, but pandas parses it back as a
+            # Timestamp when gateway.json is re-read from disk -- handle both
+            # so this can't crash a caller that reloaded the dataset.
+            spread = grp["captured_at"].max() - grp["captured_at"].min()
+            spread_seconds = int(spread.total_seconds()) if hasattr(spread, "total_seconds") else int(spread)
+            if spread_seconds > 24 * 3600:
+                errors.append(f"Hard-negative pair {pair_key} is {spread_seconds / 3600:.1f}h "
+                               f"apart -- far enough that the date window alone separates them.")
+
     # --- scenario coverage: every configured failure mode actually appears at
     # least once -- a missing scenario would otherwise look like a matcher
     # success (nothing to fail on) rather than a generator gap ---
@@ -146,10 +285,26 @@ def validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df, hard_negat
         errors.append(f"Global conservation broken: gateway settlement total (Rs.{global_gateway_rupees:,.2f}) "
                        f"!= non-orphan bank posting total (Rs.{global_bank_rupees:,.2f}).")
 
+    _validate_loan_recoveries(gateway_df, ledger_df, loan_book_df, errors)
+    _validate_chargebacks(gateway_df, ledger_df, bank_df, gt_df, errors)
+
+    # --- chargeback raw count invariant (added via external review, same
+    # class as the hard-negative count check above) -- chargeback_received
+    # is deliberately absent from config.FAILURE_MODES (see
+    # chargebacks.py's docstring), so the "every configured failure mode
+    # appears at least once" scenario-coverage check above never covers it
+    # -- nothing else was asserting the raw count at all. ---
+    chargeback_count = int((gt_df["failure_mode"] == "chargeback_received").sum())
+    if chargeback_count != config.CHARGEBACK_COUNT:
+        errors.append(f"Expected {config.CHARGEBACK_COUNT} chargeback_received rows, "
+                       f"found {chargeback_count}.")
+
     if errors:
         raise AssertionError("Dataset validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
 
     return {
+        "loan_recovery_row_count": int(len(loan_book_df)) if loan_book_df is not None else 0,
+        "chargeback_row_count": chargeback_count,
         "n1_payment_count": int(n1_count),
         "one_n_settlement_payment_count": int(one_n_count),
         "unique_settlements": int(eligible["settlement_id"].nunique()),

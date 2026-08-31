@@ -34,6 +34,7 @@ def _json_default(o):
 
 from run_matcher import run
 from matching.loaders import load_sources
+from matching.root_cause import cluster_escalated_cases, summarize, per_exception_type_amplification
 from evaluate import evaluate
 from cash_position import config as cp_config
 from cash_position.engine import build_cash_position
@@ -62,6 +63,22 @@ def matcher_section(report, settlement_matches):
         "escalated": int((~exc["auto_resolve_eligible"]).sum()),
         "risk_class_breakdown": exc["risk_class"].value_counts().to_dict(),
     }
+
+
+def root_cause_section(report):
+    """Collapses the escalated queue into its underlying causes. Cheap
+    (~70ms, no new dependency) and deterministic -- see
+    matching/root_cause.py for why this is a join, not an embedding model."""
+    escalated = report[report["final_exception_type"].notna()
+                        & (~report["auto_resolve_eligible"])]
+    clusters = cluster_escalated_cases(report)
+    payload = summarize(clusters, len(escalated))
+    payload["per_exception_type"] = per_exception_type_amplification(
+        report, clusters).to_dict(orient="records")
+    payload["top_clusters"] = clusters.head(5)[
+        ["cluster_id", "final_exception_type", "case_count", "risk_class",
+         "amount_at_risk_rupees"]].to_dict(orient="records")
+    return payload
 
 
 def evaluate_section():
@@ -110,7 +127,9 @@ def cash_position_section(report, gateway):
         "held_rupees": round(s["held_rupees"], 2),
         "held_count": s["held_count"],
         "projected_cash_position_rupees": round(s["projected_cash_position_rupees"], 2),
-        "at_risk_by_exception_type": s["at_risk_by_exception_type"].to_dict(),
+        # already a plain dict -- cash_position/engine.py's summarize_snapshot()
+        # converts this at the source now, no .to_dict() needed here anymore.
+        "at_risk_by_exception_type": s["at_risk_by_exception_type"],
         "forecast_daily": result["forecast"].to_dict(orient="records"),
     }
 
@@ -149,6 +168,7 @@ def main():
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "dataset": dataset_metadata,
         "matcher": matcher_section(report, settlement_matches),
+        "root_cause": root_cause_section(report),
         # evaluate() always uses its own module-level DATA_DIR (re-runs the
         # matcher internally too) -- fine for this script's scope, but means
         # --data-dir doesn't affect this section specifically.

@@ -21,7 +21,19 @@ def _primary_gateway_dates(gateway: pd.DataFrame) -> pd.DataFrame:
     """One row per transaction_id_ref, using the same drop_duplicates rule
     matching/report.py itself uses (keep="first") -- keeps cash position's
     notion of "the" gateway row per transaction consistent with the matcher's.
-    settle_date is NaT for held_for_risk_review (settled_at never populates)."""
+    settle_date is NaT for held_for_risk_review (settled_at never populates,
+    verified: eligible_for_settlement is False iff failure_mode ==
+    "held_for_risk_review" -- data_generation/payments.py, the only place
+    it's set -- so this is the only path to a NaT settle_date, not one of
+    several).
+
+    "first" (drop_duplicates(keep="first")) means first-in-row-order, not
+    first-in-time -- matches matching/report.py's own convention
+    deliberately (same rule, same grain). Only 9 of ~1,500+ successful
+    transactions in the curated dataset ever have more than one successful
+    gateway row for the same transaction_id_ref, so which one counts as
+    "primary" here is a low-stakes edge case in practice, not a source of
+    real drift today."""
     successful = gateway[gateway["attempt_status"] == "success"]
     primary = successful.drop_duplicates("transaction_id_ref", keep="first").set_index("transaction_id_ref")
     return pd.DataFrame({
@@ -96,7 +108,17 @@ def summarize_snapshot(detail: pd.DataFrame) -> dict:
         "at_risk_due_count": len(at_risk_due),
         "at_risk_due_nominal_rupees": float(at_risk_due["cash_amount_rupees"].sum()),
         "at_risk_due_known_delta_rupees": float(at_risk_due["net_delta_rupees"].dropna().sum()),
-        "at_risk_by_exception_type": at_risk_due["final_exception_type"].value_counts(),
+        # .to_dict() (not the raw Series value_counts() returns) -- pandas
+        # converts numpy int64 counts to plain Python int in the process, so
+        # this dict is JSON-safe on its own, matching orphan_rows's own
+        # to_dict(orient="records") treatment elsewhere in this module.
+        # Verified empirically: no current caller was actually broken by the
+        # raw-Series version (review_backend/main.py never touches this key,
+        # run_cash_position.py only prints individual snapshot fields,
+        # export_dashboard_data.py was already calling .to_dict() at its own
+        # call site) -- fixed at the source anyway so a future caller can't
+        # rediscover this the hard way.
+        "at_risk_by_exception_type": at_risk_due["final_exception_type"].value_counts().to_dict(),
 
         "not_yet_captured_count": int((detail["cash_bucket"] == BUCKET_NOT_YET_CAPTURED).sum()),
 
@@ -174,7 +196,16 @@ def build_daily_forecast(detail: pd.DataFrame, as_of: dt.date,
 
 def build_cash_position(report: pd.DataFrame, gateway: pd.DataFrame, as_of: dt.date,
                          horizon_business_days: int = config.FORECAST_HORIZON_BUSINESS_DAYS) -> dict:
-    """Convenience wrapper, same role as run_matcher.run()'s tuple return."""
+    """Convenience wrapper, same role as run_matcher.run()'s tuple return.
+
+    "detail" and "forecast" are deliberately raw DataFrames, not JSON-safe
+    dicts -- by design, for internal/CLI callers that want them as-is
+    (run_cash_position.py writes "forecast" straight to CSV via
+    .to_csv()). "snapshot" (see summarize_snapshot()) is the one sub-dict
+    meant as a clean, JSON-safe leaf summary. A future API caller that
+    wants "detail"/"forecast" as JSON must convert explicitly
+    (.to_dict(orient="records"), with date columns cast to .isoformat()
+    first) -- exactly what export_dashboard_data.py already does today."""
     detail = classify_positions(report, gateway, as_of)
     coverage = _forecast_horizon_coverage(detail, as_of, horizon_business_days)
     return {

@@ -61,11 +61,10 @@ class OllamaToolClient:
         resp.raise_for_status()
         return resp.json()["message"]
 
-    def final_answer(self, messages: list) -> dict:
-        """Last round: no tools, force a structured JSON verdict."""
+    def _final_answer_call(self, messages: list) -> str:
         payload = {
             "model": self.model,
-            "messages": messages + [{"role": "user", "content": FINAL_SCHEMA_INSTRUCTION}],
+            "messages": messages,
             "format": "json",
             "stream": False,
             "options": {"temperature": 0.1},
@@ -74,5 +73,39 @@ class OllamaToolClient:
             payload["think"] = self.think
         resp = requests.post(f"{self.host}/api/chat", json=payload, timeout=300)
         resp.raise_for_status()
-        content = resp.json()["message"]["content"]
-        return json.loads(content)
+        return resp.json()["message"]["content"]
+
+    def final_answer(self, messages: list, schema_instruction: str = FINAL_SCHEMA_INSTRUCTION) -> dict:
+        """Last round: no tools, force a structured JSON verdict. Retries
+        once on malformed JSON, feeding the parse error back to the model --
+        same defensive pattern agent/providers/ollama.py's resolve() and
+        groq.py already use for the single-shot agent path. Was previously a
+        single json.loads() with no retry at all; loop.py's own
+        `except Exception` around this call caught a JSONDecodeError but only
+        to immediately fall back to a zero-confidence escalation, no recovery
+        attempt. The investigator deliberately runs a SMALLER model than the
+        single-shot path (qwen3:1.7b, chosen for speed over qwen3:8b) -- if
+        anything it benefits MORE from a retry, not less. A second failure
+        still propagates to loop.py's existing except Exception, which
+        already produces a safe escalation default -- no need to duplicate
+        that fallback here. Found via external review.
+
+        schema_instruction defaults to this module's own investigator-shaped
+        FINAL_SCHEMA_INSTRUCTION (every existing investigator/ call site is
+        unaffected), but is now a parameter so a different caller can ask
+        for a differently-shaped final answer through the exact same
+        tool-calling client -- see qa_agent/loop.py, which reuses this
+        class entirely rather than duplicating the HTTP/retry logic for a
+        second time."""
+        base_messages = messages + [{"role": "user", "content": schema_instruction}]
+        content = self._final_answer_call(base_messages)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            retry_messages = base_messages + [
+                {"role": "assistant", "content": content},
+                {"role": "user", "content": f"Your previous response was not valid JSON: {e}. "
+                                             f"Return ONLY the corrected JSON object, nothing else."},
+            ]
+            content2 = self._final_answer_call(retry_messages)
+            return json.loads(content2)

@@ -33,11 +33,18 @@ export interface CaseListItem {
   matcher_exception_type: string;
   amount_at_risk_rupees: number;
   required_approval_tier: 1 | 2;
-  agent_confidence: number;
+  // review_backend/db.py's agent_confidence column has no NOT NULL
+  // constraint, and seed_review_queue.py reads it via a bare .get()
+  // (not .get(key, default)) in two places -- a real, not just
+  // theoretical, path to a missing value. Was typed as non-nullable with
+  // no guard at either render site (found via external review).
+  agent_confidence: number | null;
   gate_final_decision: string;
   status: CaseStatus;
   investigated: boolean;
   resolution_source: ResolutionSource;
+  sla_days_overdue: number;
+  sla_breached: boolean;
 }
 
 export interface CaseListResponse {
@@ -117,7 +124,7 @@ export interface CaseDetail {
     reclassified: boolean;
     agent_root_cause: string;
     agent_recommended_action: string;
-    agent_confidence: number;
+    agent_confidence: number | null;
     agent_policy_id: string;
     policy_id_consistent: boolean;
     agent_sufficient_evidence: boolean;
@@ -145,14 +152,37 @@ export interface CaseDetail {
     review_count: number;
     awaiting_role: ReviewerRole | null;
   };
+  sla: CaseSla | null;
   review_history: ReviewHistoryItem[];
   activity: ActivityItem[];
+  journal_entry: JournalEntry;
   provenance: {
     seeded_at: string;
     audit_log_source: string;
     audit_record_hash: string;
     schema_version: string;
   };
+}
+
+// Mirrors journal_entries.py's build_journal_entry() exactly, as embedded
+// in GET /api/cases/{id}. Deterministic, no LLM involved -- see
+// journal_entries.py's own module docstring for why.
+export interface JournalEntryLine {
+  account_code: string;
+  account_name: string;
+  side: "DR" | "CR";
+  amount_rupees: number;
+}
+
+export interface JournalEntry {
+  transaction_id: string;
+  exception_type: string | null;
+  narration: string;
+  lines: JournalEntryLine[];
+  total_debits_rupees: number;
+  total_credits_rupees: number;
+  balanced: boolean;
+  generated_at: string;
 }
 
 export interface ExceptionTypeBreakdown {
@@ -169,6 +199,50 @@ export interface CashPositionStats {
   at_risk_rupees: number;
   projected_cash_position_rupees: number;
   automation_rate_pct: number;
+  // The denominator automation_rate_pct is a percentage OF -- 2,072 ledger
+  // transactions, not the 617-case escalated queue shown elsewhere on the
+  // same page (a completely different, smaller number).
+  automation_numerator: number;
+  total_ledger_transactions: number;
+}
+
+export interface CycleTimeStageStats {
+  count: number;
+  mean_days: number;
+  median_days: number;
+}
+
+export interface CycleTimeStatusEntry {
+  completed: CycleTimeStageStats | null;
+  currently_open_count: number;
+  currently_open_avg_days: number | null;
+  oldest_open_transaction_id: string | null;
+  oldest_open_days: number | null;
+}
+
+export interface CycleTimeSummary {
+  as_of: string;
+  by_status: Record<string, CycleTimeStatusEntry>;
+  bottleneck_status: string | null;
+  bottleneck_avg_days: number | null;
+}
+
+export interface SlaSummary {
+  as_of: string;
+  tat_business_days: number;
+  open_cases_checked: number;
+  breached_count: number;
+  total_days_overdue: number;
+  compensation_exposure_rupees: number;
+  worst_case_transaction_id: string | null;
+  worst_case_days_overdue: number;
+}
+
+export interface CaseSla {
+  sla_deadline: string | null;
+  sla_days_overdue: number;
+  sla_breached: boolean;
+  sla_compensation_accrued_rupees?: number;
 }
 
 export interface StatsResponse {
@@ -179,6 +253,8 @@ export interface StatsResponse {
   counts_by_tier: { "1": number; "2": number };
   investigated_count: number;
   cash_position: CashPositionStats | null;
+  sla: SlaSummary;
+  cycle_time: CycleTimeSummary;
   stream_mode: boolean;
 }
 
@@ -247,6 +323,96 @@ export interface ReconciliationStatement {
   books_side: ReconciliationBooksSide;
   bank_side: ReconciliationBankSide;
   reconciliation_variance_rupees: number;
+  // The backend's own healthy/broken judgment (cash_position/reconciliation_statement.py:
+  // abs(variance) <= max(₹1, 0.5% of matched-confirmed rupees) -- a deliberately
+  // generous, documented tolerance covering the dataset's real, explained ~0.13%
+  // residual). The frontend must use this directly, not re-derive its own
+  // threshold -- a stricter frontend-side cutoff previously showed amber
+  // "warning" styling on this exact healthy state (found via external review).
+  reconciliation_tied: boolean;
+}
+
+// Mirrors matching/root_cause.py's cluster_escalated_cases() / summarize()
+// output exactly, as returned by GET /api/root-cause-clusters.
+export interface RootCauseCluster {
+  cluster_id: string;
+  cluster_key: string;
+  cluster_basis: "settlement" | "merchant";
+  final_exception_type: string;
+  merchant_id: string;
+  settlement_id: string | null;
+  case_count: number;
+  risk_class: string;
+  amount_at_risk_rupees: number;
+  transaction_ids: string[];
+}
+
+export interface RootCauseSummary {
+  escalated_cases: number;
+  root_cause_clusters: number;
+  amplification_factor: number;
+  multi_case_clusters: number;
+  cases_in_multi_case_clusters: number;
+  pct_cases_in_multi_case_clusters: number;
+  singleton_clusters: number;
+  largest_cluster_case_count: number;
+  largest_cluster_id?: string;
+  largest_cluster_exception_type?: string;
+  total_amount_at_risk_rupees: number;
+}
+
+export interface RootCauseClustersResponse {
+  summary: RootCauseSummary;
+  clusters: RootCauseCluster[];
+}
+
+// What GET /api/cases/bulk-review accepts -- deliberately a NARROWER
+// decision set than a single-case review (see review_backend/models.py's
+// BulkReviewRequest docstring for why "overridden"/"reverted" are excluded).
+export type BulkReviewDecision = "approved" | "escalated";
+
+export interface BulkReviewRequest {
+  transaction_ids: string[];
+  reviewer_name: string;
+  reviewer_role: ReviewerRole;
+  decision: BulkReviewDecision;
+  notes?: string | null;
+}
+
+// Mirrors qa_agent/schema.py exactly, as returned by POST /api/qa. Reuses
+// ToolCallRecord (defined above for InvestigationDetail) rather than a
+// second near-duplicate type -- same {step, tool_name, arguments, result}
+// shape investigator/'s own tool trace already uses.
+export interface QAGroundingCheck {
+  claimed_numbers: number[];
+  ungrounded_numbers: number[];
+  all_grounded: boolean;
+}
+
+export interface QAResult {
+  question: string;
+  answer: string;
+  citations: string[];
+  grounding: QAGroundingCheck;
+  tool_log: ToolCallRecord[];
+  tool_rounds_used: number;
+  stopped_reason: string;
+  elapsed_seconds: number;
+  model: string | null;
+}
+
+export interface BulkReviewCaseResult {
+  transaction_id: string;
+  outcome: "reviewed" | "skipped";
+  new_status: CaseStatus | null;
+  reason: string | null;
+}
+
+export interface BulkReviewResult {
+  requested: number;
+  reviewed_count: number;
+  skipped_count: number;
+  results: BulkReviewCaseResult[];
 }
 
 export interface CaseFilters {

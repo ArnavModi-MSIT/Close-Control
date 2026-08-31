@@ -34,6 +34,14 @@ def build_ground_truth(payments: pd.DataFrame, utr_assignment: dict, posting_id_
         if fm == "clean" and not is_collision:
             expected_resolution = "auto_resolve"
 
+        # duplicate_of_event_id names the EVENT THAT IS a duplicate (i.e. the
+        # retry), not "the id this row is a duplicate of" despite how the
+        # field name reads on first pass -- both the parent and child row
+        # still end up with original_payment_id = the true original's id and
+        # duplicate_of_event_id = the true duplicate's id either way, just
+        # derived from opposite directions depending on which row you're on.
+        # Flagged by an external review as easy to "fix" incorrectly during
+        # a later skim -- traced through and confirmed correct as written.
         duplicate_of_event_id = None
         original_payment_id = None
         if fm == "duplicate_payment":

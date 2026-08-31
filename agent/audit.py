@@ -22,11 +22,20 @@ def write_entry(report_row: dict, resolution, gate_result: dict, provider, elaps
         "settlement_id": report_row.get("settlement_id"),
         "merchant_id": report_row.get("merchant_id"),
 
-        # provider/model -- distinguishes ollama/groq/anthropic/mock explicitly,
-        # not just a generic "live" vs "offline_mock" flag
+        # provider/model -- distinguishes ollama/groq/anthropic/mock explicitly.
+        # run_mode used to collapse this to a single offline_mock/live boolean,
+        # which mislabeled Ollama (a real model, but 100% local -- no network
+        # call, no cost) the same as Groq/Anthropic's genuine cloud calls.
+        # Found by an external review pass: a reader trusting run_mode alone
+        # (not cross-referencing provider) would see "live" and reasonably
+        # read that as contradicting an "entirely local/offline" demo claim.
+        # Derived from provider.name directly instead, so the field means
+        # what it says without needing the cross-reference.
         "provider": provider.name,
         "model": provider.model,
-        "run_mode": "offline_mock" if config.OFFLINE_MODE else "live",
+        "run_mode": {
+            "mock": "offline_mock", "ollama": "live_local", "groq": "live_cloud", "anthropic": "live_cloud",
+        }.get(provider.name, "live_cloud"),
 
         # matcher's type is authoritative; agent's may differ (reclassification)
         "matcher_exception_type": gate_result["matcher_exception_type"],

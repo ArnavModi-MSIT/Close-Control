@@ -58,7 +58,10 @@ def call_reverify(**context):
 with DAG(
     dag_id="closed_loop_reverification",
     description="Re-runs the matcher and auto-closes review-queue cases whose exception resolved",
-    start_date=dt.datetime(2026, 1, 1),
+    # tz-aware -- Airflow assumes UTC for a naive datetime anyway but warns
+    # about it in the scheduler logs; found by an external review pass,
+    # one-line fix, no behavior change either way.
+    start_date=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
     schedule="*/1 * * * *",
     catchup=False,
     max_active_runs=1,

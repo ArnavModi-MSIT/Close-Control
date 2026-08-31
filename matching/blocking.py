@@ -39,8 +39,12 @@ def build_blocks(settlements: pd.DataFrame, bank: pd.DataFrame) -> dict:
         amt_high = s["expected_total_rupees"] * (1 + config.AMOUNT_BLOCK_TOLERANCE_PCT)
         # split tranches aren't necessarily even -- a tranche can be a small
         # fraction of the total, so the lower bound must stay generous and
-        # only serves to filter out obviously unrelated large bank rows
-        amt_low = min(amt_low, s["expected_total_rupees"] * 0.05, 1.0)
+        # only serves to filter out obviously unrelated large bank rows.
+        # See config.py's SPLIT_TRANCHE_LOWER_BOUND_* comment for why this
+        # applies to every settlement, not just split-eligible ones, and
+        # what that's measured to cost in candidate-block overlap.
+        amt_low = min(amt_low, s["expected_total_rupees"] * config.SPLIT_TRANCHE_LOWER_BOUND_FRACTION,
+                       config.SPLIT_TRANCHE_LOWER_BOUND_FLOOR_RUPEES)
         amount_mask = (candidates["credit_amount_rupees"] >= amt_low) & (candidates["credit_amount_rupees"] <= amt_high)
 
         blocks[s["settlement_id"]] = candidates[date_mask & amount_mask]

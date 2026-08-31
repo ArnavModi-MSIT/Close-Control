@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api";
-import type { CaseFilters, ReviewSubmission } from "../types";
+import type { BulkReviewRequest, CaseFilters, ReviewSubmission } from "../types";
 
 // Lightweight, cheap query -- polled unconditionally so the app can
 // detect stream_mode turning on (see run_stream_simulator.py) and light
@@ -68,6 +68,59 @@ export function useCaseDetail(transactionId: string | null) {
     queryKey: ["case", transactionId],
     queryFn: () => api.getCase(transactionId!),
     enabled: transactionId !== null,
+  });
+}
+
+export function useRunSummary(enabled: boolean) {
+  return useQuery({
+    queryKey: ["run-summary"],
+    queryFn: api.getRunSummary,
+    enabled,
+    // A pre-generated file (run_summary.py's output), not a live
+    // computation -- long staleTime is correct here, not a shortcut. It
+    // only changes when someone re-runs that script.
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useRootCauseClusters(enabled: boolean) {
+  return useQuery({
+    queryKey: ["root-cause-clusters"],
+    queryFn: api.getRootCauseClusters,
+    enabled,
+    // Same reasoning as useReconciliationStatement -- a panel a reviewer
+    // opens deliberately, not a live-updating widget. Matches the
+    // endpoint's own 8s server-side cache TTL closely enough that
+    // re-expanding the panel rarely triggers a redundant matcher run.
+    staleTime: 8_000,
+  });
+}
+
+export function useBulkReview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: BulkReviewRequest) => api.bulkReview(payload),
+    onSuccess: () => {
+      // A bulk action can change status for many cases and the cluster
+      // membership itself (a reviewed case's transaction still appears in
+      // the matcher's escalated set until the underlying condition
+      // actually resolves, but its review status changes) -- invalidate
+      // broadly, same "correctness over micro-optimizing" call as
+      // useSubmitReview above.
+      queryClient.invalidateQueries({ queryKey: ["cases"] });
+      queryClient.invalidateQueries({ queryKey: ["stats"] });
+      queryClient.invalidateQueries({ queryKey: ["root-cause-clusters"] });
+    },
+  });
+}
+
+export function useAskQA() {
+  // A plain mutation, no onSuccess invalidation -- a Q&A answer is
+  // read-only by construction (qa_agent/loop.py's own system prompt: "you
+  // are answering a question, not authorizing an action"), so it never
+  // changes anything else this app has cached.
+  return useMutation({
+    mutationFn: (question: string) => api.askQA(question),
   });
 }
 

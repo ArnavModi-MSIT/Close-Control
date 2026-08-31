@@ -29,15 +29,26 @@ from fastapi.responses import RedirectResponse
 
 from . import db
 from . import cache
+from . import sla
+from . import chain
+from . import cycle_time
 from .config import MANAGER_APPROVAL_THRESHOLD_RUPEES
-from .models import ReviewSubmission, ReverificationRequest
-from .state_machine import next_status, InvalidTransition, APPLICATION_VERSION
+from .models import ReviewSubmission, ReverificationRequest, BulkReviewRequest, QARequest
+from .state_machine import next_status, InvalidTransition, APPLICATION_VERSION, OPEN_STATUSES
 
 from run_matcher import run as run_matcher
 from matching.loaders import load_sources
+from matching.root_cause import cluster_escalated_cases, summarize
+from matching.loaders import load_loan_book
+from qa_agent.tools import ToolContext as QAToolContext
+from qa_agent.loop import ask as qa_ask
+from qa_agent import config as qa_config
+from investigator.ollama_client import OllamaToolClient
+from journal_entries import build_journal_entry
 from cash_position.engine import build_cash_position
 from cash_position.config import DEFAULT_AS_OF
 from cash_position.reconciliation_statement import build_reconciliation_statement
+from corrections import append_correction
 
 UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui")
 
@@ -60,6 +71,7 @@ CASH_POSITION_DATA_DIR = os.environ.get(
 # be the thing serving stale data under normal operation.
 CASH_POSITION_CACHE_TTL_SECONDS = 8
 RECONCILIATION_STATEMENT_CACHE_TTL_SECONDS = 8
+ROOT_CAUSE_CLUSTERS_CACHE_TTL_SECONDS = 8
 
 
 def _cash_position_stats() -> dict | None:
@@ -90,9 +102,8 @@ def _cash_position_stats() -> dict | None:
             gateway, _, _ = load_sources(CASH_POSITION_DATA_DIR)
             result = build_cash_position(report, gateway, DEFAULT_AS_OF)
             snap = result["snapshot"]
-            automation_rate = float(
-                (report["final_exception_type"].isna() | report["auto_resolve_eligible"]).mean()
-            )
+            automated_mask = report["final_exception_type"].isna() | report["auto_resolve_eligible"]
+            automation_rate = float(automated_mask.mean())
             return {
                 "as_of": DEFAULT_AS_OF.isoformat(),
                 "confirmed_rupees": round(snap["confirmed_rupees"], 2),
@@ -100,6 +111,14 @@ def _cash_position_stats() -> dict | None:
                 "at_risk_rupees": round(snap["held_rupees"] + snap["at_risk_due_nominal_rupees"], 2),
                 "projected_cash_position_rupees": round(snap["projected_cash_position_rupees"], 2),
                 "automation_rate_pct": round(automation_rate * 100, 1),
+                # The KPI card only ever showed the percentage, with no
+                # visible anchor for what it's a percentage OF -- 617 (the
+                # escalated-queue count shown elsewhere on the same page)
+                # is a completely different, smaller number, so a reader
+                # had no way to tell 70.2% was out of 2,072, not 617.
+                # Exposed explicitly rather than left implicit in a tooltip.
+                "automation_numerator": int(automated_mask.sum()),
+                "total_ledger_transactions": int(len(report)),
             }
         except Exception as e:  # noqa: BLE001 -- deliberately broad, see docstring
             print(f"[WARN] cash position unavailable for /api/stats: {type(e).__name__}: {e}")
@@ -169,9 +188,52 @@ def _get_reviews(conn, transaction_id: str):
     ).fetchall()
 
 
-def _derive_status(case_row, reviews) -> str:
-    if reviews:
-        return reviews[-1]["resulting_status"]
+def _latest_review_status_by_txn(conn) -> dict:
+    """{transaction_id: latest resulting_status} for EVERY case, in one query.
+
+    Status derivation only ever needs the most recent review's
+    resulting_status (see _derive_status_from_latest below), never the full
+    history -- so any endpoint that derives status for many cases at once
+    (/api/stats, /api/cases) can use this instead of calling _get_reviews()
+    once per case. That per-case pattern was a genuine N+1: measured at 604
+    queries / 0.53s against the real 603-case database versus 1 query /
+    0.012s here, a 45x difference, on an endpoint the frontend polls every
+    3 seconds and which deliberately cannot be Redis-cached (it must reflect
+    live review state, see cache.py).
+
+    DISTINCT ON is Postgres-specific and intentional -- this codebase
+    targets Postgres only now (see db.py's module docstring on the SQLite
+    migration), and it lets the database return one row per transaction
+    instead of shipping every review row to Python to be reduced.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT ON (transaction_id) transaction_id, resulting_status "
+        "FROM reviews ORDER BY transaction_id, id DESC"
+    ).fetchall()
+    return {r["transaction_id"]: r["resulting_status"] for r in rows}
+
+
+def _review_count_by_txn(conn) -> dict:
+    """{transaction_id: review count} for EVERY case with at least one
+    review, in one query -- same N+1-avoidance shape as
+    _latest_review_status_by_txn above, for the one other piece of
+    per-case review data a bulk endpoint sometimes needs
+    (expected_review_count's optimistic-concurrency guard). A transaction_id
+    missing from this dict has zero reviews; callers should .get(id, 0)."""
+    rows = conn.execute(
+        "SELECT transaction_id, COUNT(*) AS n FROM reviews GROUP BY transaction_id"
+    ).fetchall()
+    return {r["transaction_id"]: r["n"] for r in rows}
+
+
+def _derive_status_from_latest(case_row, latest_status: str | None) -> str:
+    """The single source of truth for how a case's status is derived.
+    Takes just the latest review's resulting_status (or None if the case has
+    no reviews yet) rather than the whole list, so both the one-case path
+    (_derive_status) and the all-cases path (_latest_review_status_by_txn)
+    apply identical rules."""
+    if latest_status is not None:
+        return latest_status
     # No human action yet -- the case's initial status depends on what the
     # gate itself decided. Prefer the investigation's own gate outcome when
     # one exists (it's the richer, later signal -- see db.py's migration
@@ -179,6 +241,11 @@ def _derive_status(case_row, reviews) -> str:
     # original proposal's outcome otherwise.
     decision = case_row["investigation_gate_decision"] or case_row["gate_final_decision"]
     return "auto_resolved" if decision == "auto_resolve" else "pending"
+
+
+def _derive_status(case_row, reviews) -> str:
+    return _derive_status_from_latest(
+        case_row, reviews[-1]["resulting_status"] if reviews else None)
 
 
 def _build_activity(cd: dict, reviews) -> list[dict]:
@@ -295,13 +362,24 @@ def list_cases(exception_type: str | None = None, status: str | None = None,
             params,
         ).fetchall()
 
+        # One query for every case's latest review status, instead of one
+        # query per case inside the loop below (the same N+1 that /api/stats
+        # had -- see _latest_review_status_by_txn's docstring for the
+        # measured 45x difference).
+        latest_status = _latest_review_status_by_txn(conn)
+
+        # Only a case still awaiting a human can breach its SLA -- one that's
+        # already approved/overridden/escalated/auto-closed was acted on, so
+        # ageing it further would be misleading.
         cases = []
         for row in rows:
-            reviews = _get_reviews(conn, row["transaction_id"])
-            case_status = _derive_status(row, reviews)
+            case_status = _derive_status_from_latest(row, latest_status.get(row["transaction_id"]))
             if status and case_status != status:
                 continue
             cd = _row_to_case_dict(row)
+            case_sla = (sla.sla_for_case(cd["transaction_id"], DEFAULT_AS_OF, CASH_POSITION_DATA_DIR)
+                        if case_status in OPEN_STATUSES
+                        else {"sla_deadline": None, "sla_days_overdue": 0, "sla_breached": False})
             cases.append({
                 "transaction_id": cd["transaction_id"],
                 "matcher_exception_type": cd["matcher_exception_type"],
@@ -312,6 +390,8 @@ def list_cases(exception_type: str | None = None, status: str | None = None,
                 "status": case_status,
                 "investigated": cd["investigated"],
                 "resolution_source": cd["resolution_source"],
+                "sla_days_overdue": case_sla["sla_days_overdue"],
+                "sla_breached": case_sla["sla_breached"],
             })
 
         total = len(cases)
@@ -385,8 +465,26 @@ def get_case(transaction_id: str):
                 "awaiting_role": "manager" if case_status == "pending_manager_approval" else
                                  ("analyst" if case_status == "pending" else None),
             },
+            # RBI TAT position -- only meaningful while a case is still
+            # awaiting a human; see review_backend/sla.py.
+            "sla": sla.sla_for_case(cd["transaction_id"], DEFAULT_AS_OF, CASH_POSITION_DATA_DIR)
+                   if case_status in OPEN_STATUSES else None,
             "review_history": [_row_to_review_dict(r) for r in reviews],
             "activity": _build_activity(cd, reviews),
+            # Deterministic double-entry journal-entry draft (journal_entries.py)
+            # -- "run the books," taken literally. No LLM involved: the
+            # accounting treatment per exception_type is fixed, known
+            # practice, not a case-by-case judgment call, so this is built
+            # entirely from fields already stored on this case row, the
+            # same "AI proposes nothing here, it's 100% deterministic"
+            # discipline as cash_position/ and matching/root_cause.py.
+            "journal_entry": build_journal_entry({
+                "transaction_id": cd["transaction_id"],
+                "final_exception_type": cd["matcher_exception_type"],
+                "ledger_expected_net_rupees": cd["ledger_expected_net_rupees"],
+                "observed_net_rupees": cd["observed_net_rupees"],
+                "net_delta_rupees": cd["net_delta_rupees"],
+            }),
             "provenance": {
                 "seeded_at": cd["seeded_at"],
                 "audit_log_source": cd["audit_log_source"],
@@ -437,18 +535,53 @@ def submit_review(transaction_id: str, submission: ReviewSubmission):
 
         review_uuid = str(uuid.uuid4())
         created_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        review_fields = {
+            "review_uuid": review_uuid, "transaction_id": transaction_id,
+            "reviewer_name": submission.reviewer_name, "reviewer_role": submission.reviewer_role,
+            "decision": submission.decision, "override_field": submission.override_field,
+            "override_old_value": submission.override_old_value,
+            "override_new_value": submission.override_new_value, "notes": submission.notes,
+            "previous_status": current_status, "resulting_status": new_status,
+            "created_at": created_at, "application_version": APPLICATION_VERSION,
+        }
+        # Computed inside the SAME transaction as the insert below, before
+        # it -- see chain.next_chain_hash()'s own docstring for why the
+        # advisory lock it acquires must span both steps to be race-safe
+        # against a concurrent reviewer doing the same thing.
+        chain_hash = chain.next_chain_hash(conn, review_fields)
         conn.execute(
             """INSERT INTO reviews
                (review_uuid, transaction_id, reviewer_name, reviewer_role, decision,
                 override_field, override_old_value, override_new_value, notes,
-                previous_status, resulting_status, created_at, application_version)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                previous_status, resulting_status, created_at, application_version, chain_hash)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (review_uuid, transaction_id, submission.reviewer_name, submission.reviewer_role,
              submission.decision, submission.override_field, submission.override_old_value,
              submission.override_new_value, submission.notes, current_status, new_status,
-             created_at, APPLICATION_VERSION),
+             created_at, APPLICATION_VERSION, chain_hash),
         )
         conn.commit()
+
+        if submission.decision == "overridden":
+            # Written AFTER the review itself committed successfully --
+            # never record a correction for a review that didn't actually
+            # persist. Best-effort: a write failure here must never turn a
+            # successful review submission into a 500 (the correction
+            # memory is an enhancement to future prompts, never part of
+            # this request's own contract) -- see corrections.py's
+            # docstring for the full design.
+            try:
+                append_correction(
+                    CASH_POSITION_DATA_DIR, transaction_id=transaction_id,
+                    matcher_exception_type=case_row["matcher_exception_type"],
+                    override_field=submission.override_field,
+                    override_old_value=submission.override_old_value,
+                    override_new_value=submission.override_new_value,
+                    reason=submission.notes, reviewer_name=submission.reviewer_name,
+                    created_at=created_at,
+                )
+            except OSError as e:  # noqa: BLE001 -- deliberately narrow+non-fatal, see comment above
+                print(f"[WARN] could not append correction for {transaction_id}: {e}")
 
         return {
             "review_uuid": review_uuid,
@@ -458,6 +591,102 @@ def submit_review(transaction_id: str, submission: ReviewSubmission):
         }
     finally:
         conn.close()
+
+
+@app.post("/api/cases/bulk-review")
+def bulk_review(payload: BulkReviewRequest):
+    """Apply ONE review decision to a whole set of cases at once -- the
+    review-side counterpart to GET /api/root-cause-clusters: a reviewer who
+    trusts a cluster's diagnosis (e.g. "these 47 cases are all the same
+    missing-bank-reference settlement") can act on it as one thing instead
+    of clicking through every case individually.
+
+    Deliberately reuses submit_review() UNCHANGED, once per transaction_id
+    -- this is not a new state-machine path, it is the existing single-case
+    path called N times. Every case still individually validates against
+    state_machine.py's rules (tier, current status, terminal-state guards),
+    so a case that has since moved to a state where this decision is no
+    longer legal is skipped and reported, never silently forced through.
+
+    Two-pass concurrency design, mirroring POST /api/reverify exactly: pass
+    1 reads each case's CURRENT review count (a short read-only sweep);
+    pass 2 submits each review with that count as expected_review_count, so
+    a case a different reviewer touched in the moments between the two
+    passes is safely rejected (409) rather than silently overwritten --
+    same optimistic-concurrency guard every single-case review already
+    gets, just captured explicitly here since there is no client-loaded
+    page state to compare against for a bulk action.
+    """
+    conn = db.get_connection()
+    try:
+        review_counts: dict[str, int] = {}
+        missing: list[str] = []
+        for transaction_id in payload.transaction_ids:
+            row = conn.execute(
+                "SELECT 1 FROM cases WHERE transaction_id = %s", (transaction_id,)
+            ).fetchone()
+            if row is None:
+                missing.append(transaction_id)
+                continue
+            review_counts[transaction_id] = len(_get_reviews(conn, transaction_id))
+    finally:
+        conn.close()
+
+    results = []
+    for transaction_id in missing:
+        results.append({"transaction_id": transaction_id, "outcome": "skipped",
+                         "new_status": None, "reason": "no case found"})
+
+    for transaction_id, review_count in review_counts.items():
+        submission = ReviewSubmission(
+            reviewer_name=payload.reviewer_name,
+            reviewer_role=payload.reviewer_role,
+            decision=payload.decision,
+            notes=payload.notes,
+            expected_review_count=review_count,
+        )
+        try:
+            result = submit_review(transaction_id, submission)
+            results.append({"transaction_id": transaction_id, "outcome": "reviewed",
+                             "new_status": result["new_status"], "reason": None})
+        except HTTPException as e:
+            results.append({"transaction_id": transaction_id, "outcome": "skipped",
+                             "new_status": None, "reason": str(e.detail)})
+
+    return {
+        "requested": len(payload.transaction_ids),
+        "reviewed_count": sum(1 for r in results if r["outcome"] == "reviewed"),
+        "skipped_count": sum(1 for r in results if r["outcome"] == "skipped"),
+        "results": results,
+    }
+
+
+@app.get("/api/root-cause-clusters")
+def root_cause_clusters():
+    """Collapses the escalated queue into its underlying root causes (see
+    matching/root_cause.py) -- computed live against CASH_POSITION_DATA_DIR,
+    same short-TTL best-effort Redis cache pattern as
+    _cash_position_stats()/reconciliation_statement() above. Purely derived
+    from the matcher's report; never touches Postgres or the cases table,
+    so a cluster's case_count can differ momentarily from the review
+    queue's own counts if a case was just approved (the review action
+    doesn't change what the MATCHER sees, only what a human decided about
+    it) -- same "computed fresh, not from stored state" contract as the
+    reconciliation statement above.
+    """
+    def _compute():
+        report, _, _ = run_matcher(CASH_POSITION_DATA_DIR)
+        escalated_count = int(
+            (report["final_exception_type"].notna() & (~report["auto_resolve_eligible"])).sum()
+        )
+        clusters = cluster_escalated_cases(report)
+        return {
+            "summary": summarize(clusters, escalated_count),
+            "clusters": clusters.to_dict(orient="records"),
+        }
+
+    key = cache.root_cause_clusters_key(CASH_POSITION_DATA_DIR)
+    return cache.cached_or_compute(key, ROOT_CAUSE_CLUSTERS_CACHE_TTL_SECONDS, _compute)
 
 
 @app.post("/api/reverify")
@@ -507,20 +736,33 @@ def reverify(payload: ReverificationRequest = ReverificationRequest()):
     # via external review).
     conn = db.get_connection()
     try:
-        rows = conn.execute("SELECT transaction_id, matcher_exception_type FROM cases").fetchall()
+        # Was one query for ALL cases plus 2 queries PER CASE
+        # (_get_case_row/_get_reviews inside the loop below) -- the exact
+        # N+1 shape this codebase already measured and fixed once for
+        # /api/stats/api/cases (see _latest_review_status_by_txn's own
+        # docstring, 45x difference). Reintroduced here since this endpoint
+        # predates that fix; closed the same way, reusing the same two
+        # bulk-query helpers instead of a third bespoke one -- found via
+        # external review, worth fixing specifically here since Airflow
+        # triggers this endpoint every minute (see reverification_dag.py).
+        rows = conn.execute(
+            "SELECT transaction_id, matcher_exception_type, investigation_gate_decision, "
+            "gate_final_decision FROM cases"
+        ).fetchall()
+        latest_status = _latest_review_status_by_txn(conn)
+        review_counts = _review_count_by_txn(conn)
         closed_candidates, changed_exception, still_open = [], [], []
         for row in rows:
             transaction_id = row["transaction_id"]
-            case_row = _get_case_row(conn, transaction_id)
-            reviews = _get_reviews(conn, transaction_id)
-            status = _derive_status(case_row, reviews)
-            if status not in ("pending", "pending_manager_approval"):
+            status = _derive_status_from_latest(row, latest_status.get(transaction_id))
+            if status not in OPEN_STATUSES:
                 continue  # already decided (by a human or the gate) -- not eligible for auto-closure
+            review_count = review_counts.get(transaction_id, 0)
 
             if transaction_id not in is_clean_by_txn.index:
                 still_open.append(transaction_id)  # can't currently observe it -- leave alone, not "clean"
             elif is_clean_by_txn[transaction_id]:
-                closed_candidates.append((transaction_id, len(reviews), row["matcher_exception_type"]))
+                closed_candidates.append((transaction_id, review_count, row["matcher_exception_type"]))
             else:
                 current_type = current_exception_by_txn[transaction_id]  # non-null here, is_clean_by_txn was False
                 if current_type != row["matcher_exception_type"]:
@@ -572,6 +814,73 @@ def reverify(payload: ReverificationRequest = ReverificationRequest()):
     }
 
 
+@app.get("/api/audit-chain/verify")
+def audit_chain_verify():
+    """Independently re-verifies the hash-chained audit trail (see
+    review_backend/chain.py) -- walks the ENTIRE reviews table and
+    recomputes every row's chain_hash from scratch, comparing against
+    what's stored. Deliberately NOT cached: this is a small, cheap query
+    (a handful of hashes over however many reviews exist at demo scale),
+    and caching an integrity check would be exactly the wrong instinct --
+    the whole point is that it re-derives the answer every time, not that
+    it's fast."""
+    conn = db.get_connection()
+    try:
+        return chain.verify_chain(conn)
+    finally:
+        conn.close()
+
+
+@app.get("/api/run-summary")
+def run_summary():
+    """Serves whatever run_summary.py last wrote to
+    CASH_POSITION_DATA_DIR/run_summary.txt -- deliberately NEVER triggers
+    an LLM call on request, same "pre-computed, then served statically"
+    pattern export_dashboard_data.py already uses for dashboard_data.json.
+    Returns generated: False (not a 404) when the file doesn't exist yet --
+    this is an optional convenience layer, a missing summary is a normal
+    state for a dataset nobody's run `python run_summary.py` against yet,
+    never an error."""
+    path = os.path.join(CASH_POSITION_DATA_DIR, "run_summary.txt")
+    if not os.path.exists(path):
+        return {"generated": False, "summary": None}
+    with open(path, encoding="utf-8") as f:
+        return {"generated": True, "summary": f.read().strip()}
+
+
+@app.post("/api/qa")
+def qa(payload: QARequest):
+    """Settlement Q&A agent (qa_agent/) -- direction #2 from the buildathon
+    brief, additive to the existing reconciliation loop, not a replacement
+    for anything. Genuinely different latency profile from every other
+    endpoint in this file: a real tool-calling LLM round trip, ~1-2 minutes
+    end to end on local Ollama, not a fast DB/matcher query. Deliberately
+    NOT Redis-cached (see cache.py) -- every question is different, and a
+    per-question cache key isn't worth the complexity for an endpoint
+    that's asked interactively, not polled. A plain `def` (not `async def`)
+    like every other endpoint here -- FastAPI already runs sync handlers in
+    a threadpool, so one slow question never blocks /api/stats's 3-second
+    poll or any other request.
+
+    Builds a fresh ToolContext per call (same "computed fresh" pattern
+    _cash_position_stats() used before caching existed) -- the ~1-2s
+    matcher re-run is negligible next to the LLM round trip itself, so
+    there's nothing worth caching here beyond what Ollama itself does."""
+    try:
+        report, settlement_matches, _ = run_matcher(CASH_POSITION_DATA_DIR)
+        gateway, bank, _ = load_sources(CASH_POSITION_DATA_DIR)
+        ctx = QAToolContext(report, gateway, bank, settlement_matches,
+                             loan_book=load_loan_book(CASH_POSITION_DATA_DIR))
+        client = OllamaToolClient(model=payload.model or qa_config.QA_MODEL)
+        result = qa_ask(payload.question, ctx, client)
+    except Exception as e:  # noqa: BLE001 -- Ollama down/unreachable is the
+        # expected failure mode here, not a code bug; surfaced as a clear
+        # 503 rather than a raw 500, same discipline as
+        # reconciliation_statement()'s own error handling.
+        raise HTTPException(503, f"Q&A agent unavailable: {type(e).__name__}: {e}")
+    return result.model_dump()
+
+
 @app.get("/api/stats")
 def stats():
     conn = db.get_connection()
@@ -587,11 +896,19 @@ def stats():
         by_exception_type: dict = {}
         by_tier = {1: 0, 2: 0}
         investigated_count = 0
+        # One query for all latest review statuses, not one per case -- this
+        # endpoint is polled every 3s by the frontend and deliberately isn't
+        # Redis-cached (it must show live review state), so the old per-case
+        # pattern meant 604 queries on every poll. See
+        # _latest_review_status_by_txn for the measured 45x difference.
+        latest_status = _latest_review_status_by_txn(conn)
+        still_open = []
         for row in rows:
-            reviews = _get_reviews(conn, row["transaction_id"])
-            s = _derive_status(row, reviews)
+            s = _derive_status_from_latest(row, latest_status.get(row["transaction_id"]))
             counts[s] += 1
             amount_by_status[s] += row["amount_at_risk_rupees"]
+            if s in OPEN_STATUSES:
+                still_open.append(row["transaction_id"])
 
             et = row["matcher_exception_type"]
             bucket = by_exception_type.setdefault(
@@ -619,6 +936,19 @@ def stats():
             "exception_type_breakdown": exception_type_breakdown,
             "counts_by_tier": {"1": by_tier[1], "2": by_tier[2]},
             "investigated_count": investigated_count,
+            # Regulatory SLA position across everything still awaiting a
+            # human -- RBI's T+5 TAT bound and the Rs.100/day compensation
+            # that accrues past it (see review_backend/sla.py). Computed
+            # from the ledger's own business-day-aware expected settlement
+            # date, not an invented internal target.
+            "sla": sla.sla_summary(still_open, DEFAULT_AS_OF, CASH_POSITION_DATA_DIR),
+            # Operational cycle time per review-queue status (how long a
+            # case actually spends waiting at each stage, and which stage
+            # is the current bottleneck) -- distinct from and complementary
+            # to sla above (regulatory deadline vs. process throughput);
+            # see review_backend/cycle_time.py's own docstring for why this
+            # one is measured against real wall-clock time.
+            "cycle_time": cycle_time.cycle_time_summary(conn),
             "cash_position": _cash_position_stats(),
             # Lets the frontend show a "LIVE SIMULATION" indicator without
             # needing a second build -- this server process and the main

@@ -1,10 +1,14 @@
 import type {
+  BulkReviewRequest,
+  BulkReviewResult,
   CaseDetail,
   CaseFilters,
   CaseListResponse,
+  QAResult,
   ReconciliationStatement,
   ReviewSubmission,
   ReviewSubmissionResult,
+  RootCauseClustersResponse,
   StatsResponse,
 } from "./types";
 
@@ -75,5 +79,32 @@ export function submitReview(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export function getRunSummary(): Promise<{ generated: boolean; summary: string | null }> {
+  return fetchJson(`${API}/run-summary`);
+}
+
+export function getRootCauseClusters(): Promise<RootCauseClustersResponse> {
+  return fetchJson(`${API}/root-cause-clusters`);
+}
+
+export function bulkReview(payload: BulkReviewRequest): Promise<BulkReviewResult> {
+  return fetchJson(`${API}/cases/bulk-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+// A real tool-calling LLM round trip, ~1-2 minutes end to end on local
+// Ollama -- callers should show a loading state for far longer than any
+// other request in this app, not treat a slow response as broken.
+export function askQA(question: string): Promise<QAResult> {
+  return fetchJson(`${API}/qa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
   });
 }

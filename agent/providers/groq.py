@@ -85,8 +85,15 @@ class GroqProvider(LLMProvider):
             content = resp.json()["choices"][0]["message"]["content"]
             return json.loads(content)
 
-        # exhausted retries -- raise so the caller's normal error handling takes over
-        resp.raise_for_status()
+        # exhausted retries -- raise so the caller's normal error handling takes over.
+        # Deliberately NOT resp.raise_for_status() first: if this line is reached,
+        # every attempt returned 429 (any other status exits the loop early via
+        # return above), so raise_for_status() would always raise a generic
+        # HTTPError here and this message would never be seen -- found by an
+        # external review pass, confirmed by tracing the control flow: harmless
+        # today (HTTPError is still a RequestException, so resolve()'s except
+        # branch catches it either way), but the more useful diagnostic was
+        # unreachable dead code.
         raise requests.exceptions.RequestException(
             f"Rate limited after {MAX_RATE_LIMIT_RETRIES} retries")
 

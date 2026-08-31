@@ -45,19 +45,66 @@ AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit_log.jsonl")
 INVESTIGATION_LOG_PATH = os.path.join(DATA_DIR, "investigation_log.jsonl")
 
 
+# investigator/loop.py writes this placeholder root_cause when even the
+# final-answer call couldn't reach the model at all (e.g. Ollama wasn't
+# running) -- a total infra failure, not a real investigation result.
+# Defined here (used by both functions below) rather than only where
+# _investigation_fields() needed it originally.
+_TOTAL_FAILURE_MARKER = "[INVESTIGATION FAILED TO PRODUCE A FINAL ANSWER"
+
+
+def _is_failure_entry(entry: dict) -> bool:
+    return (entry.get("root_cause") or "").startswith(_TOTAL_FAILURE_MARKER)
+
+
 def _load_investigations(path: str) -> dict:
-    """Keyed by transaction_id, keeping the LATEST entry if a case was
-    investigated more than once (investigation_log.jsonl is append-only
+    """Keyed by transaction_id, keeping the best entry on record if a case
+    was investigated more than once (investigation_log.jsonl is append-only
     across runs, same as audit_log.jsonl). Returns {} if the file doesn't
-    exist yet -- investigator/ is optional, most cases won't have this."""
+    exist yet -- investigator/ is optional, most cases won't have this.
+
+    "Best" is NOT simply "last line in the file" -- that was a real bug,
+    found by tracing why only 6 of 8 structurally-reachable
+    deemed_success_ambiguous cases had actually been enriched with a real
+    investigation, when investigation_log.jsonl showed all 8 had a genuine
+    successful run (confidence 0.95+, sufficient_evidence=True,
+    gate_decision=auto_resolve) on record. Two of them (trn-000237,
+    trn-000424) had their real successes silently discarded: this project's
+    investigation history genuinely alternates success/failure/success/
+    failure across separate sessions (local runs, Kaggle retries), and for
+    those two the file happens to END on a failure placeholder. The old
+    "last line wins, no matter what" logic handed that failure straight to
+    _investigation_fields(), which correctly recognized it as not a real
+    investigation and reported "never run" -- discarding four genuine
+    successes that existed earlier in the same file purely because of
+    where a later RETRY happened to get appended, not because the retry
+    was actually more informative.
+
+    A failed retry must never erase an already-recorded real result --
+    that was _investigation_fields()'s own stated intent ("must not...
+    permanently block a later real investigation from being picked up"),
+    which only holds if the loader actually surfaces the real one to it.
+    Preference order per transaction_id: a real (non-failure) entry always
+    wins over a failure entry, regardless of which is later in the file;
+    among two entries of the same kind, the later one wins (matching the
+    original append-only-log "latest run" intent)."""
     if not os.path.exists(path):
         return {}
-    latest = {}
+    best: dict[str, dict] = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             entry = json.loads(line)
-            latest[entry["transaction_id"]] = entry
-    return latest
+            txn = entry["transaction_id"]
+            existing = best.get(txn)
+            if existing is None or _is_failure_entry(existing) or not _is_failure_entry(entry):
+                # No prior entry, OR the prior one was a failure (a real
+                # result -- or even a later failure -- may replace it), OR
+                # this new entry is itself real (a real entry always wins
+                # over whatever came before, failure or not). The one case
+                # that must NOT overwrite: existing is real AND entry is a
+                # failure -- falls through to the implicit `else: pass`.
+                best[txn] = entry
+    return best
 
 
 def _canonical_hash(audit_entry: dict, report_row: dict) -> str:
@@ -85,6 +132,24 @@ def _build_evidence_fields_cited(cited_names: list, report_row: dict, transactio
     resolved positionally against investigation_log, exactly matching
     investigator/loop.py's own tool_evidence_ids() citation convention.
 
+    ALSO resolves a citation that names a tool DIRECTLY (e.g.
+    "search_bank_statement") instead of its TOOL-N label -- found live,
+    the same way, on trn-000555: a case with two genuine, real tool calls
+    whose evidence still showed both as "not a known evidence field",
+    because the model cited them by tool name rather than the instructed
+    TOOL-N shorthand. Checked at scale before treating this as worth
+    fixing, not assumed: 148 of 313 real investigations (47%) do this for
+    at least one citation -- the model's dominant style for tool-result
+    citations, not a rare slip. Resolved against the FIRST investigation_log
+    entry with that tool_name (a citation names a TOOL, not a specific call
+    index, so there's no more precise match available if a tool was ever
+    invoked more than once in one investigation -- doesn't happen in
+    practice today, but the ambiguity is real and this is the honest
+    resolution of it). Still correctly falls through to "not a known
+    evidence field" for a tool name that was never actually called --
+    widens the accepted citation FORMAT, not what counts as genuine
+    evidence.
+
     transaction_id is taken as its own argument, NOT read off report_row --
     report_row comes from report_by_txn, whose dicts are also fed into
     _canonical_hash() unmodified; report.set_index("transaction_id") drops
@@ -98,6 +163,12 @@ def _build_evidence_fields_cited(cited_names: list, report_row: dict, transactio
     tool_by_label = {
         f"TOOL-{i + 1}": record for i, record in enumerate(investigation_log or [])
     }
+    # First occurrence wins if a tool was ever called more than once in one
+    # investigation -- see this function's docstring for why that's the
+    # honest resolution of a genuinely ambiguous case, not a guess.
+    tool_by_name = {}
+    for record in investigation_log or []:
+        tool_by_name.setdefault(record.get("tool_name"), record)
 
     out = []
     for name in cited_names:
@@ -108,6 +179,9 @@ def _build_evidence_fields_cited(cited_names: list, report_row: dict, transactio
         elif name in tool_by_label:
             record = tool_by_label[name]
             out.append({"field": f"{name} ({record.get('tool_name')})", "value": record.get("result"), "cited": True})
+        elif name in tool_by_name:
+            record = tool_by_name[name]
+            out.append({"field": name, "value": record.get("result"), "cited": True})
         elif name in report_row:
             out.append({"field": name, "value": report_row[name], "cited": True})
         else:
@@ -143,13 +217,18 @@ def _primary_from_investigation(inv_entry: dict, report_row: dict) -> dict:
     )
     # investigation_log.jsonl stores each tool call's own record (not an
     # InvestigationResult object), so tool_evidence_ids() itself can't be
-    # called on it directly -- but its logic is just "one TOOL-N per
-    # investigation_log entry, in order," which is reproduced inline here
-    # against the raw JSONL list to stay consistent with GENERAL_INSTRUCTIONS'
-    # citation convention (investigator/loop.py) without importing a
-    # function that expects a different input type.
+    # called on it directly -- but its logic (one TOOL-N per
+    # investigation_log entry, PLUS that entry's own tool_name as an
+    # accepted alias -- see tool_evidence_ids()'s docstring for why the
+    # alias exists: 148 of 313 real investigations cite a tool by name
+    # instead of TOOL-N) is reproduced inline here against the raw JSONL
+    # list to stay consistent with GENERAL_INSTRUCTIONS' citation convention
+    # (investigator/loop.py) without importing a function that expects a
+    # different input type.
+    _inv_log = inv_entry.get("investigation_log") or []
     extra_valid_evidence_ids = frozenset(
-        f"TOOL-{i + 1}" for i in range(len(inv_entry.get("investigation_log") or []))
+        {f"TOOL-{i + 1}" for i in range(len(_inv_log))}
+        | {entry.get("tool_name") for entry in _inv_log if entry.get("tool_name")}
     )
     gate_result = apply_gate(resolution, report_row, extra_valid_evidence_ids)
     return {
@@ -201,9 +280,6 @@ def _primary_from_audit_entry(entry: dict) -> dict:
     }
 
 
-_TOTAL_FAILURE_MARKER = "[INVESTIGATION FAILED TO PRODUCE A FINAL ANSWER"
-
-
 def _investigation_fields(inv_entry: dict | None) -> tuple:
     """(investigated, summary, drafted_communication, tool_rounds, log_json,
     gate_decision, investigated_at) -- all None/0 if this case was never
@@ -213,13 +289,15 @@ def _investigation_fields(inv_entry: dict | None) -> tuple:
     infra failure (e.g. Ollama wasn't running): investigator/loop.py
     writes a placeholder root_cause starting with _TOTAL_FAILURE_MARKER
     when even the final-answer call couldn't reach the model at all --
-    that's not a real investigation, just a failed attempt, and must not
-    be allowed to (a) mark a case "investigated" with junk content, or
-    (b) permanently block a later real investigation from being picked
-    up -- the enrichment guard below only fires once per case."""
+    that's not a real investigation, just a failed attempt. This is now a
+    genuine backstop rather than the only defense: _load_investigations()
+    itself already prefers a real entry over a failure one across the
+    whole file, so this only fires when EVERY entry on record for a
+    transaction is a failure -- never letting a transaction with zero real
+    investigations get marked "investigated" with junk content."""
     if inv_entry is None:
         return (0, None, None, None, None, None, None)
-    if (inv_entry.get("root_cause") or "").startswith(_TOTAL_FAILURE_MARKER):
+    if _is_failure_entry(inv_entry):
         return (0, None, None, None, None, None, None)
     return (
         1,
@@ -256,6 +334,24 @@ def seed(audit_log_path: str = AUDIT_LOG_PATH, data_dir: str = DATA_DIR,
     inserted, unchanged, conflicts, skipped_no_report, enriched, backfilled = 0, 0, [], [], 0, 0
     inserted_investigator_primary = 0
     try:
+        # One upfront query for every existing case, instead of one SELECT
+        # per escalated entry inside the loop below -- the same N+1 shape
+        # this codebase already measured and fixed for /api/reverify
+        # (review_backend/main.py), arguably higher-impact here:
+        # run_stream_simulator.py calls seed() every tick (default 3s) over
+        # the FULL escalated set (not just newly-arrived entries), so the
+        # per-tick query count grows with the backlog across a whole demo
+        # run -- tens of thousands of round trips summed over a typical
+        # 5-minute stream demo. A snapshot taken once here is safe: this
+        # function only ever inserts a transaction_id it doesn't already
+        # have in `escalated`, never revisits one later in the same run, so
+        # a stale read mid-loop isn't possible. Found via external review.
+        existing_rows = conn.execute(
+            "SELECT transaction_id, audit_record_hash, investigated, "
+            "investigation_gate_decision, agent_decided_at FROM cases"
+        ).fetchall()
+        existing_by_txn = {r["transaction_id"]: r for r in existing_rows}
+
         for entry in escalated:
             txn_id = entry["transaction_id"]
             report_row = report_by_txn.get(txn_id)
@@ -264,10 +360,7 @@ def seed(audit_log_path: str = AUDIT_LOG_PATH, data_dir: str = DATA_DIR,
                 continue
 
             record_hash = _canonical_hash(entry, report_row)
-            existing = conn.execute(
-                "SELECT audit_record_hash, investigated, investigation_gate_decision, "
-                "agent_decided_at FROM cases WHERE transaction_id = %s", (txn_id,)
-            ).fetchone()
+            existing = existing_by_txn.get(txn_id)
             inv_fields = _investigation_fields(investigations.get(txn_id))
 
             if existing is not None:

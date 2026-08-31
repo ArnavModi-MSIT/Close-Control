@@ -80,14 +80,20 @@ def get_active_provider():
     return _provider
 
 
-def resolve_exception(report_row: dict, use_policy_retrieval: bool = True) -> ExceptionResolution:
+def resolve_exception(report_row: dict, use_policy_retrieval: bool = True,
+                       data_dir: str | None = None) -> ExceptionResolution:
     """Main entry point. report_row: one dict from matching.report's output.
 
     use_policy_retrieval=False strips the retrieved policy block from the
     prompt, leaving only the general instructions + evidence. Used only by
     the RAG ablation study (run_rag_ablation.py) to measure what retrieval
     actually buys the agent -- the normal pipeline (run_agent.py) never
-    disables it."""
+    disables it.
+
+    data_dir: where to look for corrections.py's correction_log.jsonl
+    (see that module's docstring) -- defaults to corrections.DEFAULT_DATA_DIR,
+    the main demo's data/. Every existing caller keeps working unchanged;
+    this is additive."""
     is_complete, missing = check_evidence_complete(report_row)
     if not is_complete:
         exc_type = report_row.get("final_exception_type") or "unknown"
@@ -123,7 +129,10 @@ def resolve_exception(report_row: dict, use_policy_retrieval: bool = True) -> Ex
             "sufficient_evidence=False rather than guessing.]"
         )
 
-    system_prompt = GENERAL_INSTRUCTIONS + policy_block
+    from corrections import correction_block_for, DEFAULT_DATA_DIR
+    correction_block = correction_block_for(exc_type, data_dir or DEFAULT_DATA_DIR)
+
+    system_prompt = GENERAL_INSTRUCTIONS + policy_block + correction_block
     evidence_block = build_evidence(report_row)
     user_message = f"Resolve this exception.\n\n{evidence_block}"
     return provider.resolve(system_prompt, user_message)

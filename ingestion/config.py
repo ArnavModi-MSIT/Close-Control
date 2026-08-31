@@ -49,6 +49,32 @@ PARTNER_DISPLAY_NAMES = {
     "northbridge": "Northbridge Bank",
 }
 
+
+def partner_for_bank_account(bank_account_id: str) -> str:
+    """Which banking partner a canonical bank row came from.
+
+    The canonical bank schema deliberately carries NO partner column --
+    matching/ is designed to be completely unaware that ingestion/ exists
+    (see this package's own docstring), and a partner column would leak
+    that boundary into the matcher's input. But partner identity is still
+    fully derivable after the fact from the account the row settled into,
+    via MERCHANT_PARTNER_ASSIGNMENT above -- which is exactly what
+    evaluate.py's per-partner reconciliation section does, at REPORT time,
+    without matching/ ever seeing it.
+
+    Raises on an unknown account rather than returning a silent "unknown"
+    bucket: every bank row in this dataset settles into an assigned
+    merchant's account by construction, so an unmapped one means a real
+    upstream problem, not a partner worth charting.
+    """
+    merchant_id = bank_account_id.replace("acct_", "", 1)
+    if merchant_id not in MERCHANT_PARTNER_ASSIGNMENT:
+        raise ValueError(
+            f"Unknown bank account: {bank_account_id!r} -- no partner assignment for "
+            f"merchant {merchant_id!r} in MERCHANT_PARTNER_ASSIGNMENT."
+        )
+    return MERCHANT_PARTNER_ASSIGNMENT[merchant_id]
+
 # Orphan bank credits: genuine bank-side entries with no settlement they
 # could ever match (an interest credit, a fee reversal from the bank
 # itself) -- injected into this partner's raw export only. Amounts are

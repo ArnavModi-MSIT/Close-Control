@@ -49,6 +49,20 @@ def build_gateway_records(payments: pd.DataFrame):
             "successful_attempt_id": None,
             "refund_id": refund_id,
             "refund_reason": refund_reason,
+            # Chargeback fields are part of the gateway's real schema but are
+            # ALWAYS None in this curated dataset -- no chargeback is ever
+            # generated, deliberately. Adding a chargeback FAILURE_MODE would
+            # change the weights `random.choices()` draws from in payments.py
+            # and reshuffle every payment's mode, invalidating the already-
+            # verified benchmark numbers, the 603-entry audit log, and the
+            # investigator's logged runs. These constants consume no random
+            # draws, so the dataset stays byte-identical. matching/ledger_check.py
+            # fully implements chargeback detection off these fields, and
+            # test_chargeback.py proves it against synthetic rows -- the same
+            # "prove the mechanism without regenerating the dataset" pattern
+            # test_ambiguity.py already uses for the ambiguity logic.
+            "chargeback_id": None,
+            "chargeback_reason": None,
             "duplicate_of_payment_id": p["duplicate_of_payment_id"],
             "payment_index_internal": p["payment_index"],  # dropped before writing; join aid only
         })

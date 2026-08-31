@@ -13,7 +13,7 @@ they exercise matching/engine.py's "unmatched" bank-side path, which
 otherwise never fires on this dataset (see evaluate.py section 0b).
 
     from ingestion.warehouse import run_ingestion
-    bank_df_final, example = run_ingestion(bank_df, gateway_df, OUT_DIR)
+    bank_df_final, example, metrics = run_ingestion(bank_df, gateway_df, OUT_DIR)
 """
 
 import datetime as dt
@@ -29,24 +29,43 @@ from .connectors import CANONICAL_COLUMNS, PARTNERS
 from .connectors import northbridge
 
 IDENTITY_COLUMNS = ["utr", "credit_amount_rupees", "credit_date", "value_date",
-                     "bank_account_id", "transaction_type"]
+                     "bank_account_id", "transaction_type", "narration"]
+# Of CANONICAL_COLUMNS' 9 fields, only bank_txn_id (each partner reissues
+# its own numbering -- checked separately below via its own PK properties)
+# and settlement_posting_id (the round-trip join key itself) are excluded
+# from this list. narration was found missing here with no stated reason
+# by an external review pass -- both connectors do carry it through (Ustrd
+# in CAMT XML, remarks in the Northbridge CSV) and it round-trips cleanly
+# today, but leaving it out meant a future serialization bug (an XML
+# escaping edge case, a CSV quoting bug on a comma in a merchant name)
+# would sail through this exact check undetected -- precisely the class of
+# "corrupted-but-plausible row" its own docstring says it exists to catch.
 
 
 def _partner_for_account(bank_account_id: str) -> str:
-    merchant_id = bank_account_id.replace("acct_", "", 1)
-    if merchant_id not in config.MERCHANT_PARTNER_ASSIGNMENT:
-        raise ValueError(
-            f"Unknown bank account: {bank_account_id!r} -- no partner assignment for "
-            f"merchant {merchant_id!r} in ingestion/config.py's MERCHANT_PARTNER_ASSIGNMENT. "
-            f"The 'acct_<merchant_id>' format is a hidden contract this makes explicit "
-            f"instead of a generic KeyError."
-        )
-    return config.MERCHANT_PARTNER_ASSIGNMENT[merchant_id]
+    """Thin alias for config.partner_for_bank_account() -- kept so this
+    module's existing call sites read unchanged, but the mapping logic (and
+    its unknown-account error) lives in exactly one place now that
+    evaluate.py's per-partner reporting needs the same answer."""
+    return config.partner_for_bank_account(bank_account_id)
 
 
 def _build_orphan_raw_rows() -> pd.DataFrame:
     """Orphan credits are fabricated directly in the target partner's raw
-    schema (never round-tripped from a canonical row, since none exists)."""
+    schema (never round-tripped from a canonical row, since none exists).
+
+    Hardcoded to Northbridge's raw shape (transactionId/postingReference/
+    utrNo/...) -- the assertion below is what keeps that honest. Without
+    it, changing config.ORPHAN_CREDIT_PARTNER to "suryaan" would leave this
+    function silently producing Northbridge-shaped rows for the Suryaan
+    partner, and run_ingestion()'s pd.concat([raw, orphans], ...) would
+    either silently misalign columns or fail with a confusing pandas error
+    far from the real cause -- found by an external review pass."""
+    assert config.ORPHAN_CREDIT_PARTNER == "northbridge", (
+        "_build_orphan_raw_rows() is hardcoded to Northbridge's raw shape -- "
+        "update it (or make orphan-row construction partner-shape-aware) "
+        "before changing ORPHAN_CREDIT_PARTNER."
+    )
     rows = []
     for credit in config.ORPHAN_CREDITS:
         date_ddmmyyyy = dt.date.fromisoformat(credit["credit_date"]).strftime("%d/%m/%Y")
@@ -210,15 +229,25 @@ def run_ingestion(bank_df: pd.DataFrame, gateway_df: pd.DataFrame, out_dir: str)
             raw_row_count += len(orphans)
             raw = pd.concat([raw, orphans], ignore_index=True)
 
-        raw.to_csv(os.path.join(raw_dir, f"{partner_name}.csv"), index=False)
+        # Each connector serializes its own raw shape -- Suryaan writes real
+        # CAMT.053 (ISO 20022) XML, Northbridge a proprietary flat CSV.
+        raw_path = connector.write_raw(raw, raw_dir, partner_name)
 
-        normalized = connector.normalize(raw)[CANONICAL_COLUMNS]
+        # Deliberately normalize from what was READ BACK OFF DISK, not from
+        # the in-memory frame we just built. Normalizing the in-memory copy
+        # (what this did previously) silently skipped the serializer, so a
+        # lossy write -- a dropped XML element, a mangled date, a CSV
+        # quoting bug -- could never be caught by the identity assertion
+        # below. Round-tripping through the file makes that assertion cover
+        # the on-disk format too, which is the whole point of a bronze layer.
+        raw_reloaded = connector.read_raw(raw_path)
+        normalized = connector.normalize(raw_reloaded)[CANONICAL_COLUMNS]
         normalized_parts.append(normalized)
 
-        if example is None and len(raw) > 0:
+        if example is None and len(raw_reloaded) > 0:
             example = {
                 "partner": config.PARTNER_DISPLAY_NAMES[partner_name],
-                "raw_row": raw.iloc[0].to_dict(),
+                "raw_row": raw_reloaded.iloc[0].to_dict(),
                 "normalized_row": normalized.iloc[0].to_dict(),
             }
 
@@ -231,6 +260,13 @@ def run_ingestion(bank_df: pd.DataFrame, gateway_df: pd.DataFrame, out_dir: str)
         "raw_rows": raw_row_count,
         "normalized_rows": len(bank_df_final),
         "orphan_rows": orphan_row_count,
+        # Deliberately NOT expected to equal normalized_rows/raw_rows --
+        # orphan rows have no canonical origin to round-trip against (see
+        # _build_orphan_raw_rows()), so _assert_identity_preserved() filters
+        # them out before counting. raw_rows/normalized_rows both include
+        # orphans; this one doesn't. Flagged by an external review as
+        # undocumented at this exact assembly point (the "why" lives inside
+        # _assert_identity_preserved()'s own docstring, several calls away).
         "rows_round_tripped": identity_check["rows_after"],
         "identity_check": identity_check,
     }

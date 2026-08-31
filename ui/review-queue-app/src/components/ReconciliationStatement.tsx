@@ -123,7 +123,7 @@ export function ReconciliationStatement() {
               {/* Reconciliation check, full width */}
               <div className="lg:col-span-2">
                 <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border-[1.5px] px-4 py-3 ${
-                  Math.abs(stmt.reconciliation_variance_rupees) < 0.01
+                  stmt.reconciliation_tied
                     ? "border-good/40 bg-good-soft"
                     : "border-warn/40 bg-warn-soft"
                 }`}>

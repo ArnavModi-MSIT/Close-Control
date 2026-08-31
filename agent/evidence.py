@@ -58,11 +58,12 @@ EVIDENCE_LABEL_TO_FIELD = {
 def validate_evidence_citations(evidence_used: list[str], extra_valid_ids: frozenset = frozenset()) -> list[str]:
     """Returns whichever cited names in evidence_used do NOT correspond to a
     field actually shown in the evidence block -- i.e. the model citing
-    something it was never given. Informational only: does not change
-    auto_resolve eligibility (see agent/gate.py's gate_condition_checks,
-    which stays exactly the 6 conditions it always was) -- surfaced so a
-    human reviewer (or a future gate condition, added deliberately, not by
-    accident) can see when a citation doesn't hold up.
+    something it was never given. This list IS a hard gate condition now
+    (agent/gate.py's 7th: any name returned here blocks auto_resolve, not
+    merely a human-visible flag) -- see gate.py's own module docstring for
+    why. Still returned as a plain list rather than a bool so a human
+    reviewer sees exactly WHICH citation was fabricated, not just that one
+    was.
 
     extra_valid_ids: for investigator/ results only -- TOOL-1, TOOL-2, etc.,
     one per real investigation_log entry for that specific case. These are

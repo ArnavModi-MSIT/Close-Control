@@ -10,7 +10,7 @@ discrepancy detection -> combined report. Never reads ground_truth.csv
 
 import os
 
-from matching.loaders import load_sources
+from matching.loaders import load_sources, load_loan_book
 from matching.settlement_builder import build_settlement_candidates
 from matching.blocking import build_blocks
 from matching.engine import run_matching
@@ -22,12 +22,13 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def run(data_dir: str = DATA_DIR):
     gateway, bank, ledger = load_sources(data_dir)
+    loan_book = load_loan_book(data_dir)
 
     settlements = build_settlement_candidates(gateway)
     blocks = build_blocks(settlements, bank)
     settlement_matches = run_matching(settlements, blocks, bank)
 
-    ledger_check = check_ledger_vs_gateway(gateway, ledger)
+    ledger_check = check_ledger_vs_gateway(gateway, ledger, loan_book)
     report = build_report(ledger_check, settlement_matches, gateway, ledger)
 
     return report, settlement_matches, ledger_check
@@ -64,6 +65,7 @@ def print_summary(report, settlement_matches):
 
 if __name__ == "__main__":
     import time
+    from audit_manifest import write_manifest, summary_line
     t0 = time.perf_counter()
     report, settlement_matches, ledger_check = run()
     elapsed = time.perf_counter() - t0
@@ -71,3 +73,20 @@ if __name__ == "__main__":
     print()
     print(f"Throughput: {len(report)} transactions in {elapsed:.2f}s "
           f"(~{len(report)/elapsed:,.0f} txn/s), fully deterministic, zero LLM calls.")
+
+    # Pin this run to the exact input bytes and threshold values that
+    # produced it -- see audit_manifest.py. Cheap (three file hashes) and
+    # written on every run, so any published number can be traced back.
+    manifest_results = {
+        "transactions": int(len(report)),
+        "clean": int(report["is_clean"].sum()),
+        "settlements": int(len(settlement_matches)),
+        "settlements_matched": int((settlement_matches["match_status"] != "unmatched").sum()),
+        "escalated": int((report["final_exception_type"].notna()
+                          & (~report["auto_resolve_eligible"])).sum()),
+        "elapsed_seconds": round(elapsed, 3),
+    }
+    path, manifest = write_manifest(DATA_DIR, results=manifest_results)
+    print()
+    print(summary_line(manifest))
+    print(f"Run manifest: {path}")

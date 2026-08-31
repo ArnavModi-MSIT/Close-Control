@@ -37,13 +37,13 @@ if hasattr(sys.stdout, "reconfigure"):
 import pandas as pd
 
 from run_matcher import run
-from matching.loaders import load_sources
+from matching.loaders import load_sources, load_loan_book
 from agent.policy_kb import get_policy
 from agent.evidence import build_evidence, build_policy_block
 from agent.gate import apply_gate, is_investigation_worthwhile
 from investigator import config
 from investigator.tools import ToolContext
-from investigator.loop import investigate, tool_evidence_ids
+from investigator.loop import investigate, tool_evidence_ids, json_safe
 from investigator.ollama_client import OllamaToolClient
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -144,7 +144,8 @@ def main():
 
     report, settlement_matches, ledger_check = run(args.data_dir)
     gateway, bank, ledger = load_sources(args.data_dir)
-    ctx = ToolContext(report, gateway, bank, settlement_matches)
+    ctx = ToolContext(report, gateway, bank, settlement_matches,
+                       loan_book=load_loan_book(args.data_dir))
     client = OllamaToolClient(model=args.model or config.INVESTIGATOR_MODEL)
 
     escalated = report[report["final_exception_type"].notna() & (~report["auto_resolve_eligible"])]
@@ -201,7 +202,7 @@ def main():
                  "gate_agent_status": gate_result["agent_status"],
                  "model": client.model,
                  "investigated_at": dt.datetime.now(dt.timezone.utc).isoformat()}
-        log_file.write(json.dumps(entry, default=str) + "\n")
+        log_file.write(json.dumps(json_safe(entry), default=str) + "\n")
         log_file.flush()
         written += 1
 

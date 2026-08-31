@@ -11,8 +11,21 @@ import pandas as pd
 from . import config
 
 
-def check_ledger_vs_gateway(gateway: pd.DataFrame, ledger: pd.DataFrame) -> pd.DataFrame:
+def check_ledger_vs_gateway(gateway: pd.DataFrame, ledger: pd.DataFrame,
+                             loan_book: pd.DataFrame = None) -> pd.DataFrame:
+    """loan_book is the OPTIONAL fourth source (Razorpay Capital's recovery
+    ledger, see matching/loaders.py's load_loan_book). Defaults to None so
+    every existing caller and every dataset generated before that source
+    existed keeps working unchanged -- no loan book simply means no merchant
+    has an advance, which is a valid state rather than an error."""
     successful = gateway[gateway["attempt_status"] == "success"]
+
+    # Indexed once by transaction_id, same O(1)-lookup reasoning as
+    # grouped_by_txn below. A recovery is 1:1 with the settlement it was
+    # deducted from, so a plain dict is the right shape here.
+    recoveries_by_txn = {}
+    if loan_book is not None and len(loan_book):
+        recoveries_by_txn = {r["transaction_id"]: r for _, r in loan_book.iterrows()}
 
     # duplicate detection: >1 successful gateway row for the same transaction_id
     dup_counts = successful.groupby("transaction_id_ref").size()
@@ -46,6 +59,12 @@ def check_ledger_vs_gateway(gateway: pd.DataFrame, ledger: pd.DataFrame) -> pd.D
             "exception_type": None,
             "risk_class": "none",
             "auto_resolve_eligible": True,
+            # Populated only when a Razorpay Capital recovery actually
+            # explains this transaction's delta (see the loan-recovery
+            # branch below) -- kept on every row so the column exists
+            # uniformly for evaluate.py / diagnostics consumers.
+            "loan_id": None,
+            "loan_recovery_amount_rupees": None,
         }
 
         if matches.empty:
@@ -100,19 +119,70 @@ def check_ledger_vs_gateway(gateway: pd.DataFrame, ledger: pd.DataFrame) -> pd.D
             rows.append(result)
             continue
 
+        # chargeback -- checked BEFORE both the clean-amount test and the
+        # refund test below, deliberately, for two reasons:
+        #   1. A disputed transaction is an exception even when the money
+        #      hasn't moved yet (dispute raised, debit not yet posted ->
+        #      net_delta still ~0). Falling through to "clean" would hide a
+        #      live dispute entirely.
+        #   2. A chargeback and a refund are BOTH negative adjustments, so
+        #      sign alone cannot tell them apart -- chargeback_id is the real
+        #      distinguishing signal, which is exactly what the refund
+        #      comment below has always said this would need.
+        # Detected via .get() so this works on a dataset generated before the
+        # chargeback fields existed (missing column -> no chargeback), rather
+        # than requiring a regeneration to stay loadable.
+        chargeback_id = primary.get("chargeback_id")
+        if chargeback_id is not None and not pd.isna(chargeback_id):
+            result["exception_type"] = "chargeback_received"
+            result["risk_class"] = "high"
+            result["auto_resolve_eligible"] = False  # funds clawed back -- never auto-resolve
+            rows.append(result)
+            continue
+
         # amount reconciles cleanly
         if abs(net_delta) <= config.EXACT_MATCH_TOLERANCE_RUPEES:
             rows.append(result)  # exception_type stays None -- clean
             continue
 
+        # Razorpay Capital loan recovery -- checked BEFORE the refund branch
+        # below, deliberately. A recovery is booked as a negative adjustment
+        # exactly like a refund is, so sign alone cannot separate them; the
+        # presence of a matching record in Capital's recovery ledger is the
+        # real distinguishing signal, the same role chargeback_id plays for
+        # disputes above.
+        #
+        # The recovery is only ACCEPTED as the explanation when it actually
+        # reconciles the observed delta. observed_net = expected_net -
+        # recovery, so net_delta = -recovery, so net_delta + recovery ~= 0
+        # whenever the recovery is the true and COMPLETE explanation. A
+        # merchant with a real ₹500 recovery and a ₹3,000 shortage falls
+        # through to unexplained_shortage below, which is the correct
+        # outcome -- the residual genuinely is unexplained, and a partially
+        # -explaining record must never launder the rest of the gap into an
+        # auto-resolve (see test_loan_recovery.py Scenario 3).
+        recovery = recoveries_by_txn.get(txn_id)
+        if recovery is not None:
+            recovery_amount = round(float(recovery["recovery_amount_rupees"]), 2)
+            if abs(net_delta + recovery_amount) <= config.EXACT_MATCH_TOLERANCE_RUPEES:
+                result["exception_type"] = "loan_recovery_deduction"
+                result["risk_class"] = "low"
+                # Contracted, scheduled, and fully reconciled -- the money is
+                # not missing, it was collected under an agreement the
+                # merchant signed. Same class of explained variance as
+                # fee_variance, and auto-resolved at the MATCHER level, so
+                # this never reaches the LLM at all.
+                result["auto_resolve_eligible"] = True
+                result["loan_id"] = recovery["loan_id"]
+                result["loan_recovery_amount_rupees"] = recovery_amount
+                rows.append(result)
+                continue
+
         # explicit refund/adjustment on record -- explains a lower net amount.
-        # Invariant this dataset relies on: a negative adjustment ALWAYS means
-        # a refund, never a chargeback/reversal/other negative-adjustment
-        # scenario -- true by construction of this generator (see
-        # data_generation/hard_negatives.py, sources/gateway.py), but if the
-        # data model ever grows other negative-adjustment causes, this
-        # classification would become too broad and needs a real distinguishing
-        # signal, not just the sign (flagged by an external review).
+        # A negative adjustment here is a refund specifically: the chargeback
+        # case (the other real negative-adjustment cause) was already
+        # separated out above by its own chargeback_id signal, so this is no
+        # longer the sign-alone heuristic an external review flagged.
         if primary["adjustment_rupees"] < -config.EXACT_MATCH_TOLERANCE_RUPEES:
             result["exception_type"] = "partial_refund"
             result["risk_class"] = "medium"
@@ -131,7 +201,11 @@ def check_ledger_vs_gateway(gateway: pd.DataFrame, ledger: pd.DataFrame) -> pd.D
         #      reader to infer it from the sign check alone).
         fee_delta = round(float(primary["fee_rupees"]) + float(primary["tax_rupees"])
                            - (led["expected_fee_rupees"] + led["expected_tax_rupees"]), 2)
-        if abs(fee_delta + net_delta) <= 0.5:  # fee/tax difference accounts for the net delta
+        # fee/tax difference accounts for the net delta -- see config.py's
+        # FEE_VARIANCE_RECONCILIATION_TOLERANCE_RUPEES for why this equals
+        # EXACT_MATCH_TOLERANCE_RUPEES rather than a separate, looser value
+        # (was a bare 0.5 literal, found via external review).
+        if abs(fee_delta + net_delta) <= config.FEE_VARIANCE_RECONCILIATION_TOLERANCE_RUPEES:
             result["exception_type"] = "fee_variance"
             result["risk_class"] = "low"
             result["auto_resolve_eligible"] = True

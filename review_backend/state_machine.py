@@ -34,6 +34,17 @@ VALID_ROLES = {"analyst", "manager"}
 VALID_DECISIONS = {"approved", "overridden", "escalated", "reverted", "auto_closed"}
 TERMINAL_STATUSES = {"approved", "overridden", "escalated", "auto_closed"}
 
+# The two statuses still awaiting a human action -- NOT simply "not
+# terminal": auto_resolved is a third, distinct category (the gate itself
+# fast-tracked it, no human queue entry ever existed for it), so it belongs
+# in neither TERMINAL_STATUSES nor this set. Centralized here (was
+# hand-copied as a bare {"pending", "pending_manager_approval"} literal in
+# at least five places -- cycle_time.py, and four separate spots in
+# main.py: list_cases(), get_case(), reverify(), and /api/stats -- with
+# nothing keeping them in sync, the same class of risk HARD_NEGATIVE_PAIRS
+# was fixed for) following an external review pass.
+OPEN_STATUSES = {"pending", "pending_manager_approval"}
+
 # Fields on `cases` an override is allowed to reference. Not a suggestion --
 # review_backend/main.py rejects anything outside this set before it ever
 # reaches this module, per the design review's "do not allow arbitrary

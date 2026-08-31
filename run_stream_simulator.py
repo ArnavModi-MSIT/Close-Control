@@ -83,6 +83,7 @@ from agent.gate import apply_gate  # noqa: E402
 from agent.audit import write_entry  # noqa: E402
 from seed_review_queue import seed as seed_review_queue  # noqa: E402
 from review_backend import cache as review_cache  # noqa: E402
+from review_backend import sla as review_sla  # noqa: E402
 from cash_position.config import DEFAULT_AS_OF  # noqa: E402
 
 agent_config.LLM_PROVIDER = "mock"
@@ -180,17 +181,28 @@ def write_filtered_snapshot(gateway, bank, ledger, simulated_now: dt.datetime) -
 
 def _invalidate_stream_cache() -> None:
     """Right after each atomic snapshot write, proactively evict this run's
-    two review_backend cache entries (see review_backend/cache.py) so the
-    very next /api/stats or /api/reconciliation-statement poll recomputes
-    from the data just written, instead of serving up-to-TTL-stale numbers.
-    Uses the exact same key-builder functions main.py's endpoints use --
-    never hand-formats its own copy of the key string -- so this can never
-    silently drift out of sync with what the server is actually caching
-    under. Degrades silently if Redis is down; review_cache.invalidate()
-    itself never raises."""
+    three review_backend cache entries (see review_backend/cache.py) so the
+    very next /api/stats, /api/reconciliation-statement, or
+    /api/root-cause-clusters poll recomputes from the data just written,
+    instead of serving up-to-TTL-stale numbers. Uses the exact same
+    key-builder functions main.py's endpoints use -- never hand-formats its
+    own copy of the key string -- so this can never silently drift out of
+    sync with what the server is actually caching under. Degrades silently
+    if Redis is down; review_cache.invalidate() itself never raises."""
     as_of_iso = DEFAULT_AS_OF.isoformat()
     review_cache.invalidate(review_cache.cash_position_stats_key(STREAM_DATA_DIR, as_of_iso))
     review_cache.invalidate(review_cache.reconciliation_statement_key(STREAM_DATA_DIR, as_of_iso))
+    review_cache.invalidate(review_cache.root_cause_clusters_key(STREAM_DATA_DIR))
+    # sla.deadlines_for()'s own Python-level lru_cache (review_backend/sla.py)
+    # is a SEPARATE cache from the three Redis keys above -- its own
+    # docstring names the exact fix ("call deadlines_for.cache_clear() if a
+    # data_dir's ledger is rewritten in-process") but nothing was calling
+    # it. Without this, every transaction revealed by a tick AFTER the
+    # first sla.deadlines_for(STREAM_DATA_DIR) call would show
+    # sla_deadline: None for the rest of the live demo, since that call's
+    # cached dict was built before the transaction's ledger row existed --
+    # found via external review.
+    review_sla.deadlines_for.cache_clear()
 
 
 def start_server(port: int) -> subprocess.Popen:

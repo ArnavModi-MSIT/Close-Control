@@ -8,7 +8,14 @@ import datetime as dt
 import pandas as pd
 
 from ..config import ingestion_rand_id
-from .base import CANONICAL_COLUMNS
+from .base import CANONICAL_COLUMNS, write_raw_csv, read_raw_csv
+
+# This partner ships a proprietary flat export, so it uses the default CSV
+# serializers -- unlike suryaan.py, which owns its own CAMT.053 XML
+# read/write. Aliased rather than reimplemented so there's one CSV
+# implementation shared by every flat-file connector.
+write_raw = write_raw_csv
+read_raw = read_raw_csv
 
 RAW_COLUMNS = [
     "transactionId", "postingReference", "utrNo", "amount",

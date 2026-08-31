@@ -21,6 +21,8 @@ from data_generation.sources.gateway import build_gateway_records
 from data_generation.sources.bank import build_bank_records
 from data_generation.sources.ledger import build_ledger_records
 from data_generation.hard_negatives import add_hard_negatives, label_amount_collisions
+from data_generation.chargebacks import add_chargebacks
+from data_generation.loans import add_loan_recoveries
 from data_generation.ground_truth import build_ground_truth
 from data_generation.validation import validate_dataset
 from ingestion.warehouse import run_ingestion
@@ -51,6 +53,27 @@ def main(out_dir: str = DEFAULT_OUT_DIR):
     ledger_df = pd.concat([ledger_df, extra_ledger], ignore_index=True)
     gt_df = pd.concat([gt_df, extra_gt], ignore_index=True)
 
+    # Chargebacks -- appended AFTER hard negatives so neither the 2,000 base
+    # payments nor the hard-negative pairs shift a single random draw (see
+    # data_generation/chargebacks.py's docstring for why that matters).
+    cb_gw, cb_bank, cb_ledger, cb_gt = add_chargebacks(payments, n=config.CHARGEBACK_COUNT)
+    gateway_df = pd.concat([gateway_df, cb_gw], ignore_index=True)
+    bank_df = pd.concat([bank_df, cb_bank], ignore_index=True)
+    ledger_df = pd.concat([ledger_df, cb_ledger], ignore_index=True)
+    gt_df = pd.concat([gt_df, cb_gt], ignore_index=True)
+
+    # Razorpay Capital loan recoveries -- appended after chargebacks, same
+    # separate-id-space pattern and the same RNG-stability reason (see
+    # data_generation/loans.py). Produces a FOURTH source file: Capital's own
+    # recovery ledger, which is what lets matching/ledger_check.py tell a
+    # contracted deduction apart from money genuinely going missing.
+    ln_gw, ln_bank, ln_ledger, ln_gt, loan_book_df = add_loan_recoveries(
+        payments, n=config.LOAN_RECOVERY_COUNT)
+    gateway_df = pd.concat([gateway_df, ln_gw], ignore_index=True)
+    bank_df = pd.concat([bank_df, ln_bank], ignore_index=True)
+    ledger_df = pd.concat([ledger_df, ln_ledger], ignore_index=True)
+    gt_df = pd.concat([gt_df, ln_gt], ignore_index=True)
+
     # Multi-partner bank ingestion round-trip: canonical bank rows -> each
     # partner's own raw export format -> back to canonical, plus a few
     # orphan bank credits with no settlement at all. Value-preserving by
@@ -61,7 +84,8 @@ def main(out_dir: str = DEFAULT_OUT_DIR):
     orphan_credit_count = len(bank_df) - real_bank_row_count
 
     stats = validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df,
-                              hard_negative_pairs=config.HARD_NEGATIVE_PAIRS)
+                              hard_negative_pairs=config.HARD_NEGATIVE_PAIRS,
+                              loan_book_df=loan_book_df)
 
     # drop internal join-aid column before writing
     gateway_df = gateway_df.drop(columns=["payment_index_internal"])
@@ -69,6 +93,7 @@ def main(out_dir: str = DEFAULT_OUT_DIR):
     gateway_df.to_json(f"{OUT_DIR}/gateway.json", orient="records", indent=2)
     bank_df.to_csv(f"{OUT_DIR}/bank_statement.csv", index=False)
     ledger_df.to_csv(f"{OUT_DIR}/internal_settlement_ledger.csv", index=False)
+    loan_book_df.to_csv(f"{OUT_DIR}/loan_recovery_schedule.csv", index=False)
     gt_df.to_csv(f"{OUT_DIR}/ground_truth.csv", index=False)
 
     batch_end = config.BATCH_START + dt.timedelta(days=config.BATCH_DAYS - 1)
@@ -84,6 +109,8 @@ def main(out_dir: str = DEFAULT_OUT_DIR):
         "gateway_rows": len(gateway_df),
         "bank_rows": len(bank_df),
         "ledger_rows": len(ledger_df),
+        "loan_recovery_rows": len(loan_book_df),
+        "loan_accounts": int(loan_book_df["loan_id"].nunique()) if len(loan_book_df) else 0,
         "ground_truth_rows": len(gt_df),
         "split_settlement_groups": sum(split_flags.values()),
         "missing_utr_groups": len(missing_utr_groups),
@@ -98,6 +125,8 @@ def main(out_dir: str = DEFAULT_OUT_DIR):
     print(f"Gateway records:                              {len(gateway_df)}")
     print(f"Bank records (settlement postings):            {len(bank_df)}")
     print(f"Ledger records:                                {len(ledger_df)}")
+    print(f"Loan recovery records (Razorpay Capital):      {len(loan_book_df)} "
+          f"across {loan_book_df['loan_id'].nunique() if len(loan_book_df) else 0} advances")
     print(f"Unique settlements:                            {stats['unique_settlements']}")
     print(f"Unique bank postings:                          {stats['unique_bank_postings']}")
     print(f"Payments with N:1 payment->bank relationship:  {stats['n1_payment_count']}")

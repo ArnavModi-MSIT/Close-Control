@@ -1,6 +1,6 @@
 import type { GateConditionCheck } from "../../types";
 
-// Structured PASS/FAIL breakdown of the deterministic gate's six conditions --
+// Structured PASS/FAIL breakdown of the deterministic gate's seven conditions --
 // makes "AI recommendation" vs. "system decision" an explicit, row-by-row
 // distinction instead of one merged status. Falls back to the free-text
 // reasons list (in DetailPanel.tsx) for cases seeded before this field

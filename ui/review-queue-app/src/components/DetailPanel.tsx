@@ -6,6 +6,7 @@ import { AiBanner } from "./detail/AiBanner";
 import { AutoClosedBanner } from "./detail/AutoClosedBanner";
 import { GateChecklist } from "./detail/GateChecklist";
 import { InvestigationSection } from "./detail/InvestigationSection";
+import { JournalEntrySection } from "./detail/JournalEntrySection";
 import { ActivityTimeline } from "./detail/ActivityTimeline";
 import { ReviewForm } from "./detail/ReviewForm";
 
@@ -46,7 +47,17 @@ export function DetailPanel({ transactionId }: { transactionId: string | null })
   const { case: c, ai_proposal: ai, gate, evidence: ev, review_state: rs } = d;
 
   return (
-    <div className="sticky top-20 rounded-2xl border border-border bg-surface p-6 shadow-sm">
+    // A tall case (real tool-call JSON, a drafted email, a full activity
+    // feed, then the review form after all of it) used to have no height
+    // cap at all -- `sticky top-20` alone just lets the element grow to
+    // its full content height, so reaching "Take action" meant scrolling
+    // the ENTIRE PAGE past everything above it. Capping this pane to the
+    // viewport and giving IT the scrollbar (not the page) is the standard
+    // reading-pane pattern: the case list on the left still scrolls
+    // normally, but this pane stays in view and scrolls independently
+    // within its own bounded box -- a short, contained scroll instead of
+    // however many thousand pixels the longest section happens to be.
+    <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-sm">
       {rs.status === "auto_resolved" && <AiBanner />}
       {rs.status === "auto_closed" && <AutoClosedBanner />}
 
@@ -66,6 +77,26 @@ export function DetailPanel({ transactionId }: { transactionId: string | null })
             </span>
           }
         />
+        {d.sla && d.sla.sla_deadline && (
+          <KvRow
+            k="RBI T+5 deadline"
+            v={
+              <span
+                className={d.sla.sla_breached ? "font-semibold text-crit" : "text-ink"}
+                title={
+                  d.sla.sla_breached
+                    ? `Past RBI's T+5 business-day resolution bound by ${d.sla.sla_days_overdue} business day(s). RBI's TAT circular (20.09.2019) provides Rs.100/day automatic customer compensation past this point — roughly Rs.${(d.sla.sla_compensation_accrued_rupees ?? 0).toLocaleString("en-IN")} accrued so far on this case.`
+                    : "Still inside RBI's T+5 business-day resolution bound."
+                }
+              >
+                {d.sla.sla_deadline}
+                {d.sla.sla_breached
+                  ? ` — overdue ${d.sla.sla_days_overdue}d (≈₹${(d.sla.sla_compensation_accrued_rupees ?? 0).toLocaleString("en-IN")} accrued)`
+                  : " — within SLA"}
+              </span>
+            }
+          />
+        )}
         {ev.all_signals.length > 1 && (
           <KvRow
             k="Also observed"
@@ -103,7 +134,7 @@ export function DetailPanel({ transactionId }: { transactionId: string | null })
           k="Policy"
           v={ai.agent_policy_id + (ai.policy_id_consistent ? " ✓" : " ✗ mismatch")}
         />
-        <KvRow k="Confidence" v={ai.agent_confidence.toFixed(2)} />
+        <KvRow k="Confidence" v={ai.agent_confidence?.toFixed(2) ?? "—"} />
         <KvRow k="Sufficient evidence?" v={ai.agent_sufficient_evidence ? "Yes" : "No"} />
         <p className="mt-2.5 text-[0.86rem] text-ink-soft">{displayRootCause(ai.agent_root_cause)}</p>
         <p className="text-[0.86rem] text-ink-soft"><strong>Recommended:</strong> {ai.agent_recommended_action}</p>
@@ -149,6 +180,8 @@ export function DetailPanel({ transactionId }: { transactionId: string | null })
       {d.investigation && (
         <InvestigationSection inv={d.investigation} isCasePrimary={ai.resolution_source === "investigator"} />
       )}
+
+      <JournalEntrySection entry={d.journal_entry} />
 
       <DetailSection title={`Activity (${d.activity.length})`}>
         <ActivityTimeline activity={d.activity} />

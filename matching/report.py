@@ -8,8 +8,32 @@ import pandas as pd
 
 # highest-priority exception wins when multiple signals are present
 EXCEPTION_PRIORITY = [
+    # The ledger expected a payment that has NO successful gateway record at
+    # all -- nothing to reconcile an amount against, so nothing below this
+    # can be trusted either. Ranked above everything else for the same
+    # reason chargeback_received/signature_verification_failed rank high:
+    # no amount claim is trustworthy here. By construction (see report.py's
+    # build_report(): a transaction_id absent from `successful` gateway rows
+    # can never also get a settlement_id, so it can never co-occur with any
+    # other signal in `signals` -- this entry's exact rank never actually
+    # competes with anything, but it MUST be present in this list at all, or
+    # the case silently falls through to final_exception=None (`is_clean`
+    # True, `auto_resolve_eligible` True) instead of surfacing ledger_check's
+    # own risk_class='high'/auto_resolve_eligible=False verdict -- a real,
+    # live bug found via test_exception_priority_coverage.py's exhaustive
+    # combination sweep, never reachable on the current curated dataset
+    # (every ledger row has a matching successful gateway row by
+    # construction) but a genuine silent-misclassification risk on any
+    # dataset where that invariant doesn't hold -- see CLAUDE.md's
+    # matching/ section for the full story.
+    "no_gateway_record_found",
     "duplicate_payment_detected",
     "signature_verification_failed",
+    # A chargeback means money already settled is being clawed back by the
+    # issuer -- ranked above every settlement-side signal because no amount
+    # claim on this transaction can be trusted while a dispute is live, the
+    # same reasoning that puts signature_verification_failed above it.
+    "chargeback_received",
     "held_for_risk_review",
     "deemed_success_ambiguous",
     "settlement_bank_posting_not_found",
@@ -18,6 +42,12 @@ EXCEPTION_PRIORITY = [
     "partial_refund",
     "unexplained_shortage",
     "ambiguous_bank_match",
+    # Ranked deliberately LOW, alongside the other explained variances: a
+    # contracted Razorpay Capital recovery is a fully accounted-for reason
+    # for a smaller credit, so any genuine co-occurring problem on the same
+    # transaction (a missing bank reference, an unmatched settlement) must
+    # still win the final label rather than being masked by it.
+    "loan_recovery_deduction",
     "fee_variance",
     "timing_lag_beyond_t2",
 ]

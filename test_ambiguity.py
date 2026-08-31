@@ -171,6 +171,70 @@ def scenario_ambiguous_overage():
     print("  PASS -- engine correctly escalated instead of guessing.\n")
 
 
+def scenario_shortage_tolerant_single():
+    """A SINGLE plausibly-short candidate -- the non-ambiguous shortage path.
+
+    Distinct from scenario 5: there the two tied candidates make it
+    ambiguous. Here exactly one candidate sits inside the shortage band, so
+    the engine should MATCH it and mark the result an exception (bank paid
+    less than the settlement expected) rather than escalate or drop it.
+
+    Never fires on the curated dataset -- every bank posting there equals
+    its settlement total exactly, so `shortage_tolerant` had no coverage
+    from data OR tests until this scenario existed, while
+    run_baseline_naive.py's output credited it for value it wasn't
+    demonstrably providing."""
+    settlements = pd.DataFrame([{
+        "settlement_id": "setl_TEST8", "merchant_id": "merch_test",
+        "member_count": 1, "expected_total_rupees": 10000.00,
+        "settle_date": pd.Timestamp("2026-07-01").date(),
+    }])
+    # 9,500 = 95% of expected: inside SHORTAGE_TOLERANCE_MIN_FRACTION (0.90),
+    # below the exact-match tolerance, and the only candidate in the block.
+    bank = pd.DataFrame([
+        {"bank_txn_id": "bnk_S1", "utr": "utrS1", "credit_amount_rupees": 9500.00,
+         "credit_date": pd.Timestamp("2026-07-01").date(), "bank_account_id": "acct_merch_test"},
+    ])
+    result = run_matching(settlements, {"setl_TEST8": bank}, bank)
+    row = result.iloc[0]
+    print("Scenario 8: one plausibly-short candidate (₹9,500 vs expected ₹10,000)")
+    print(f"  match_status = {row.match_status}  (expected: matched_with_exception)")
+    print(f"  match_pass   = {row.match_pass}  (expected: shortage_tolerant)")
+    print(f"  delta        = {row.amount_delta_rupees}")
+    assert row.match_status == "matched_with_exception", \
+        f"FAILED: expected matched_with_exception, got {row.match_status}"
+    assert row.match_pass == "shortage_tolerant", \
+        f"FAILED: expected the shortage_tolerant pass, got {row.match_pass}"
+    print("  PASS -- matched, and correctly flagged as an exception not a clean match.\n")
+
+
+def scenario_overage_tolerant_single():
+    """Mirror of scenario 8, above expected: the bank credited MORE than the
+    settlement called for. Also never fires on the curated dataset."""
+    settlements = pd.DataFrame([{
+        "settlement_id": "setl_TEST9", "merchant_id": "merch_test",
+        "member_count": 1, "expected_total_rupees": 10000.00,
+        "settle_date": pd.Timestamp("2026-07-01").date(),
+    }])
+    # 10,800 = 108% of expected: inside OVERAGE_TOLERANCE_MAX_FRACTION (1.15).
+    bank = pd.DataFrame([
+        {"bank_txn_id": "bnk_O1", "utr": "utrO1", "credit_amount_rupees": 10800.00,
+         "credit_date": pd.Timestamp("2026-07-01").date(), "bank_account_id": "acct_merch_test"},
+    ])
+    result = run_matching(settlements, {"setl_TEST9": bank}, bank)
+    row = result.iloc[0]
+    print("Scenario 9: one over-credited candidate (₹10,800 vs expected ₹10,000)")
+    print(f"  match_status = {row.match_status}  (expected: matched_with_exception)")
+    print(f"  match_pass   = {row.match_pass}  (expected: overage_tolerant)")
+    print(f"  bank_overage = {row.bank_overage}")
+    assert row.match_status == "matched_with_exception", \
+        f"FAILED: expected matched_with_exception, got {row.match_status}"
+    assert row.match_pass == "overage_tolerant", \
+        f"FAILED: expected the overage_tolerant pass, got {row.match_pass}"
+    assert bool(row.bank_overage), "FAILED: bank_overage flag not set on an over-credit"
+    print("  PASS -- matched, flagged as exception, overage flag set.\n")
+
+
 def scenario_cross_settlement_conflict():
     """Two DIFFERENT settlements both expect exactly ₹1000, and only ONE
     bank posting of ₹1000 exists. Documents current (greedy, order-
@@ -210,5 +274,7 @@ if __name__ == "__main__":
     scenario_exact_vs_exact()
     scenario_ambiguous_shortage()
     scenario_ambiguous_overage()
+    scenario_shortage_tolerant_single()
+    scenario_overage_tolerant_single()
     scenario_cross_settlement_conflict()
     print("All ambiguity-mechanism proofs passed.")

@@ -18,11 +18,13 @@ import pandas as pd
 
 from run_matcher import run
 from data_generation.config import AUTO_RESOLVABLE_MODES
+from ingestion import config as ingestion_config
 from matching import config as matching_config
 from matching.loaders import load_sources
 from matching.settlement_builder import build_settlement_candidates
 from matching.blocking import build_blocks
 from matching.diagnostics import candidate_block_stats, verify_consumption_invariants, settlement_conservation_summary
+from matching.root_cause import cluster_escalated_cases, summarize, per_exception_type_amplification
 
 DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DATA_DIR = DEFAULT_DATA_DIR
@@ -223,6 +225,106 @@ def evaluate():
     print()
 
     print("=" * 70)
+    print("1d. PER-BANKING-PARTNER RECONCILIATION")
+    print("=" * 70)
+    print("The whole reason ingestion/ exists is that Razorpay settles through more than")
+    print("one banking partner. matching/ is deliberately blind to that -- the canonical")
+    print("bank schema carries no partner column, so the matcher can never accidentally")
+    print("treat one bank differently. But 'which partner is causing more breaks?' is the")
+    print("first operational question a multi-bank setup exists to answer, so it's derived")
+    print("HERE, at report time, from ingestion/config.py's authoritative merchant->partner")
+    print("assignment -- never from a column the matcher could have seen.")
+    print()
+    partner_of = {
+        row["bank_txn_id"]: ingestion_config.PARTNER_DISPLAY_NAMES[
+            ingestion_config.partner_for_bank_account(row["bank_account_id"])]
+        for _, row in bank_diag.iterrows()
+    }
+    # settlement -> the partner(s) its matched bank rows came from
+    partner_rows = []
+    for _, s in settlement_matches.iterrows():
+        for bid in s["matched_bank_txn_ids"]:
+            partner_rows.append({"partner": partner_of.get(bid), "match_pass": s["match_pass"]})
+    partner_df = pd.DataFrame(partner_rows)
+
+    bank_diag_p = bank_diag.assign(partner=bank_diag["bank_txn_id"].map(partner_of))
+    orphan_ids = set(bank_diag.loc[~bank_diag["settlement_posting_id"].isin(
+        set(gt["settlement_posting_id"].dropna())), "bank_txn_id"])
+
+    partner_summary = []
+    for partner in sorted(bank_diag_p["partner"].dropna().unique()):
+        rows_p = bank_diag_p[bank_diag_p["partner"] == partner]
+        matched_p = partner_df[partner_df["partner"] == partner] if len(partner_df) else partner_df
+        n_exact = int((matched_p["match_pass"] == "exact").sum()) if len(matched_p) else 0
+        n_split = int((matched_p["match_pass"] == "split").sum()) if len(matched_p) else 0
+        n_tol = int(matched_p["match_pass"].isin(
+            ["shortage_tolerant", "overage_tolerant"]).sum()) if len(matched_p) else 0
+        total_matched = n_exact + n_split + n_tol
+        partner_summary.append({
+            "partner": partner,
+            "bank_rows": len(rows_p),
+            "bank_rupees": round(float(rows_p["credit_amount_rupees"].sum()), 2),
+            "orphan_rows": int(rows_p["bank_txn_id"].isin(orphan_ids).sum()),
+            "matched_exact": n_exact,
+            "matched_split": n_split,
+            "matched_tolerant": n_tol,
+            "split_pass_pct": round(n_split / total_matched * 100, 1) if total_matched else 0.0,
+        })
+    results["per_partner_reconciliation"] = partner_summary
+    print(pd.DataFrame(partner_summary).to_string(index=False))
+    print()
+    if len(partner_summary) > 1:
+        hi = max(partner_summary, key=lambda p: p["split_pass_pct"])
+        lo = min(partner_summary, key=lambda p: p["split_pass_pct"])
+        if hi["split_pass_pct"] > lo["split_pass_pct"]:
+            print(f"  -> {hi['partner']} needs the split-matching pass on "
+                  f"{hi['split_pass_pct']}% of its matched settlements vs "
+                  f"{lo['partner']}'s {lo['split_pass_pct']}% -- i.e. it breaks a single")
+            print(f"     settlement across multiple bank postings far more often. A real,")
+            print(f"     actionable per-partner difference the canonical schema hides by design.")
+    print()
+
+    print("=" * 70)
+    print("1e. CROSS-CASE ROOT-CAUSE CLUSTERING")
+    print("=" * 70)
+    print("An escalated QUEUE is not a list of independent problems. One settlement")
+    print("whose bank posting arrived without a UTR flags every payment batched into")
+    print("it, so a single upstream event fans out into many individually-escalated")
+    print("cases that all clear the moment that one posting is explained. This")
+    print("collapses cases into their real underlying causes -- deterministically,")
+    print("on the exact join key that IS the fan-out mechanism (see")
+    print("matching/root_cause.py for why this is not an embedding model).")
+    print()
+    escalated_df = report[report["final_exception_type"].notna()
+                           & (~report["auto_resolve_eligible"])]
+    clusters = cluster_escalated_cases(report)
+    rc_summary = summarize(clusters, len(escalated_df))
+    results["root_cause_clustering"] = rc_summary
+
+    print(f"Escalated cases:                     {rc_summary['escalated_cases']}")
+    print(f"Distinct root causes behind them:    {rc_summary['root_cause_clusters']}")
+    print(f"Overall amplification:               {rc_summary['amplification_factor']}x")
+    print()
+    print(f"{rc_summary['multi_case_clusters']} clusters fan out to more than one case, and together they")
+    print(f"account for {rc_summary['cases_in_multi_case_clusters']} of the "
+          f"{rc_summary['escalated_cases']} escalated cases "
+          f"({rc_summary['pct_cases_in_multi_case_clusters']}% of the queue).")
+    print(f"The remaining {rc_summary['singleton_clusters']} are genuine one-off cases.")
+    print(f"Largest single cause: {rc_summary['largest_cluster_case_count']} cases "
+          f"({rc_summary['largest_cluster_exception_type']}).")
+    print()
+    print("Where the fan-out actually is (a blended average would hide this --")
+    print("one type carries essentially all of it):")
+    amp = per_exception_type_amplification(report, clusters)
+    print(amp.to_string(index=False))
+    print()
+    print("Top root causes by case count:")
+    top = clusters.head(5)[["cluster_id", "cluster_basis", "final_exception_type",
+                             "case_count", "risk_class", "amount_at_risk_rupees"]]
+    print(top.to_string(index=False))
+    print()
+
+    print("=" * 70)
     print("2. RELATIONSHIP TYPE CORRECTNESS (N:1 / 1:N structural detection)")
     print("=" * 70)
     # for each settlement, does the OBSERVED relationship match the true one?
@@ -325,6 +427,19 @@ def evaluate():
     print("=" * 70)
     print("5. AUTO-RESOLVE ALIGNMENT")
     print("=" * 70)
+    print("SCOPE: predicted_action below is derived entirely from the matcher's own")
+    print("auto_resolve_eligible column (matching/ledger_check.py) -- it never reads")
+    print("agent/gate.py's or investigator/'s actual gate_result. The one exception")
+    print("type the agent is allowed to auto-resolve (AGENT_AUTO_RESOLVABLE_TYPES =")
+    print("{'deemed_success_ambiguous'}) is therefore structurally invisible to the")
+    print("false-auto-resolve rate below: if the agent ever auto-resolved one of those")
+    print("cases incorrectly, this number would not move. This is a scope limitation")
+    print("of the number, not an arithmetic bug -- the agent/investigator layer's own")
+    print("correctness is evaluated separately (see run_rag_ablation.py's citation")
+    print("accuracy, evaluate_investigator.py's confidence/evidence-sufficiency rates),")
+    print("by this project's own 'ground truth is sacred' rule (CLAUDE.md section 9).")
+    print("Found via external review.")
+    print()
     exc = merged[merged["final_exception_type"].notna()]
     if len(exc):
         agree = (exc["auto_resolve_eligible"] == exc["expected_auto_resolvable"]).mean()
@@ -513,4 +628,19 @@ if __name__ == "__main__":
                               "for a seed-robustness check only.")
     args = parser.parse_args()
     DATA_DIR = args.data_dir
-    evaluate()
+    results = evaluate()
+
+    # Pin these scored numbers to the exact inputs and thresholds behind
+    # them (see audit_manifest.py). evaluate.py is the scoring authority, so
+    # its manifest carries the full result set -- run_matcher.py writes a
+    # lighter one on every plain matcher run.
+    from audit_manifest import write_manifest, summary_line
+    path, manifest = write_manifest(DATA_DIR, results=results)
+    print()
+    print("=" * 70)
+    print("AUDIT MANIFEST")
+    print("=" * 70)
+    print(summary_line(manifest))
+    print("Every number above is reproducible from exactly these inputs under")
+    print("exactly the rule versions recorded alongside them.")
+    print(f"Written: {path}")

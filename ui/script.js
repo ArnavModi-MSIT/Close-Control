@@ -2,6 +2,7 @@
   var sections = [
     {id:'hero', label:'Start'},
     {id:'architecture', label:'Architecture'},
+    {id:'ai', label:'AI layer'},
     {id:'value', label:'Value'}
   ];
   var dotsNav = document.getElementById('dots');
@@ -37,18 +38,30 @@
 
   // count-up stats
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Thousands separators, applied to the integer part only -- so the
+  // animated value matches the real number already sitting in the HTML
+  // (see the no-JS note below) instead of briefly rewriting "2,040" to
+  // the comma-less "2040" mid-animation.
+  function fmt(v, decimals){
+    var parts = v.toFixed(decimals).split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return parts.join('.');
+  }
   function countUp(el){
+    if (!el) return;  // a future .stat-cell without a [data-count] child degrades quietly
+                       // instead of throwing inside the IntersectionObserver callback below
+                       // (found via external review)
     var target = parseFloat(el.dataset.count);
     var decimals = parseInt(el.dataset.decimals || '0', 10);
     var suffix = el.dataset.suffix || '';
-    if (reduceMotion) { el.textContent = target.toFixed(decimals) + suffix; return; }
+    if (reduceMotion) { el.textContent = fmt(target, decimals) + suffix; return; }
     var start = null, dur = 1200;
     function step(ts){
       if (!start) start = ts;
       var p = Math.min((ts - start) / dur, 1);
       var eased = 1 - Math.pow(1 - p, 3);
       var val = target * eased;
-      el.textContent = val.toFixed(decimals) + suffix;
+      el.textContent = fmt(val, decimals) + suffix;
       if (p < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
@@ -64,14 +77,23 @@
   }, {threshold:0.4});
   document.querySelectorAll('.stat-cell').forEach(function(el){ cio.observe(el); });
 
-  // split bar (architecture section's clean/auto-resolved/to-agent breakdown)
+  // split bar (architecture section's clean/auto-resolved/to-agent breakdown).
+  // The real widths live inline in the HTML so the bar is still correct with
+  // JS blocked/failed; because JS IS running here, collapse them to 0 first
+  // so the CSS width transition has something to animate from on scroll.
+  var splitTargets = {'split-clean':'67.4%', 'split-auto':'2.8%', 'split-agent':'29.8%'};
+  Object.keys(splitTargets).forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) el.style.width = '0%';
+  });
   var splitObs = new IntersectionObserver(function(entries){
     entries.forEach(function(e){
       if (!e.isIntersecting) return;
       splitObs.unobserve(e.target);
-      document.getElementById('split-clean').style.width = '68.5%';
-      document.getElementById('split-auto').style.width = '1.9%';
-      document.getElementById('split-agent').style.width = '29.6%';
+      Object.keys(splitTargets).forEach(function(id){
+        var el = document.getElementById(id);
+        if (el) el.style.width = splitTargets[id];
+      });
     });
   }, {threshold:0.3});
   splitObs.observe(document.getElementById('architecture'));

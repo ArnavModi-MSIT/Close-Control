@@ -16,7 +16,9 @@ external review of ingestion/ (multi_partner_ingestion_review.md, item #8).
     python test_ingestion.py
 """
 
+import os
 import sys
+import tempfile
 
 import pandas as pd
 
@@ -68,12 +70,27 @@ def _round_trip(connector, label: str):
         f"{label}: to_raw() changed row count ({len(canonical_in)} -> {len(raw)})"
     )
 
-    canonical_out = connector.normalize(raw)[CANONICAL_COLUMNS]
+    # Round-trip through the connector's REAL on-disk format (CAMT.053 XML
+    # for Suryaan, CSV for Northbridge) rather than normalizing the
+    # in-memory frame -- otherwise a lossy serializer (a dropped XML
+    # element, a mangled date, a CSV quoting bug) would pass this test
+    # while corrupting the actual bronze layer.
+    with tempfile.TemporaryDirectory() as tmp:
+        raw_path = connector.write_raw(raw, tmp, "roundtrip")
+        assert os.path.exists(raw_path), f"{label}: write_raw() produced no file"
+        raw_reloaded = connector.read_raw(raw_path)
+        assert len(raw_reloaded) == len(raw), (
+            f"{label}: serializer lost rows ({len(raw)} written, {len(raw_reloaded)} read back)"
+        )
+        canonical_out = connector.normalize(raw_reloaded)[CANONICAL_COLUMNS]
+        fmt = os.path.splitext(raw_path)[1].lstrip(".").upper()
+
     assert len(canonical_out) == len(canonical_in), (
         f"{label}: normalize() changed row count ({len(canonical_in)} -> {len(canonical_out)})"
     )
 
-    print(f"{label}: canonical -> raw ({len(raw.columns)} cols, {connector.RAW_COLUMNS[0]}-style) -> canonical")
+    print(f"{label}: canonical -> raw ({len(raw.columns)} cols, {connector.RAW_COLUMNS[0]}-style) "
+          f"-> {fmt} file -> canonical")
 
     # bank_txn_id: the ONE field partners are expected to reissue --
     # verify it actually changed (proves to_raw/normalize aren't just
@@ -120,8 +137,8 @@ def test_unsupported_transaction_type_rejected(connector, raw_columns: list, typ
 
 
 if __name__ == "__main__":
-    _round_trip(suryaan, "Suryaan Bank (CAPS_SNAKE_CASE, DD-MM-YYYY, CR/DR)")
+    _round_trip(suryaan, "Suryaan Bank (CAMT.053 ISO 20022 XML, CRDT/DBIT)")
     _round_trip(northbridge, "Northbridge Bank (camelCase, DD/MM/YYYY, C/D)")
-    test_unsupported_transaction_type_rejected(suryaan, suryaan.RAW_COLUMNS, "Txn_Type", "Suryaan Bank")
+    test_unsupported_transaction_type_rejected(suryaan, suryaan.RAW_COLUMNS, "CdtDbtInd", "Suryaan Bank")
     test_unsupported_transaction_type_rejected(northbridge, northbridge.RAW_COLUMNS, "crDrIndicator", "Northbridge Bank")
     print("All connector-level round-trip proofs passed.")

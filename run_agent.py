@@ -22,6 +22,7 @@ same file. Pass --reset-log to start a clean file instead.
 """
 
 import os
+import json
 import time
 import argparse
 from collections import Counter
@@ -93,6 +94,16 @@ def main():
                          help="Wipe data/audit_log.jsonl before this run. Default is to append, "
                               "since an audit trail that gets silently erased on every run isn't "
                               "an audit trail.")
+    parser.add_argument("--only-new", action="store_true",
+                         help="Skip any transaction_id that already has an entry in the audit "
+                              "log, resolving only cases it has never seen. Use this after the "
+                              "dataset gains transactions (e.g. data_generation/chargebacks.py's "
+                              "appended chargeback space) so the existing frozen proposals keep "
+                              "their original run_id/timestamp -- and therefore their "
+                              "seed_review_queue.py hashes -- instead of being re-proposed under "
+                              "a new run and flagged as 603 conflicts. Same 'top up, don't "
+                              "redo' idea as run_investigator.py's --exception-type dedup and "
+                              "run_stream_simulator.py's already_processed_transaction_ids().")
     parser.add_argument("--concurrency", type=int, default=1,
                          help="Dispatch this many resolve_exception() calls at once instead of "
                               "one at a time (default 1, i.e. today's sequential behavior, "
@@ -126,6 +137,21 @@ def main():
     print(f"Already deterministically auto-resolved (no agent needed): "
           f"{(report['final_exception_type'].notna() & report['auto_resolve_eligible']).sum()}")
     print(f"Escalated (candidates for the agent): {len(escalated)}")
+
+    if args.only_new:
+        already = set()
+        if os.path.exists(config.AUDIT_LOG_PATH):
+            with open(config.AUDIT_LOG_PATH, encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        already.add(json.loads(line)["transaction_id"])
+        before = len(escalated)
+        escalated = escalated[~escalated["transaction_id"].isin(already)]
+        print(f"--only-new: {before - len(escalated)} already in the audit log, "
+              f"{len(escalated)} genuinely new case(s) to resolve.")
+        if escalated.empty:
+            print("Nothing new to do -- every escalated case already has a proposal on record.")
+            return
 
     if args.mode == "sample":
         escalated = stratified_sample(escalated, SAMPLE_SIZE_PER_TYPE)

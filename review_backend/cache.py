@@ -51,6 +51,13 @@ def reconciliation_statement_key(data_dir: str, as_of_iso: str) -> str:
     return f"reconciliation_statement:v1:{data_dir}:{as_of_iso}"
 
 
+def root_cause_clusters_key(data_dir: str) -> str:
+    """No as_of component -- unlike the two keys above, root-cause
+    clustering (matching/root_cause.py) has no as-of dependency at all,
+    it's a pure function of the matcher's report."""
+    return f"root_cause_clusters:v1:{data_dir}"
+
+
 def cached_or_compute(key: str, ttl_seconds: int, compute_fn: Callable[[], T]) -> T:
     """Try a Redis GET on `key`; deserialize and return on a hit. On a miss,
     OR on ANY Redis error (down, timeout, whatever), call compute_fn()
