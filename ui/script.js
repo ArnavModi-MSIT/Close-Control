@@ -3,7 +3,8 @@
     {id:'hero', label:'Start'},
     {id:'architecture', label:'Architecture'},
     {id:'ai', label:'AI layer'},
-    {id:'value', label:'Value'}
+    {id:'value', label:'Value'},
+    {id:'roadmap', label:'Roadmap'}
   ];
   var dotsNav = document.getElementById('dots');
   sections.forEach(function(s){

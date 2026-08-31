@@ -145,8 +145,8 @@
             <!-- gate -->
             <rect x="470" y="490" width="630" height="82" rx="12" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.8"/>
             <text x="785" y="522" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="15" fill="var(--ink)">DETERMINISTIC GATE</text>
-            <text x="785" y="542" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">allowlist &middot; policy match &middot; confidence &middot; evidence &middot; risk ceiling</text>
-            <text x="785" y="559" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">plain Python &mdash; ALL 7 conditions required, every time</text>
+            <text x="785" y="542" text-anchor="middle" font-size="11.5" fill="var(--ink-soft)">allowlist &middot; policy &middot; citation match &middot; confidence &middot; evidence &middot; risk ceiling</text>
+            <text x="785" y="559" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">plain Python &mdash; 7 explicit checks, ALL required, every time</text>
 
             <!-- gate outcomes -->
             <rect x="470" y="610" width="290" height="76" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
@@ -286,6 +286,74 @@
         <p>False auto-resolve rate, scored against hidden ground truth over all 2,072 transactions &mdash; a wider denominator than the 98.97% auto-resolve <i>precision</i> figure elsewhere on this page, which scores only the 1,455 cases the system actually auto-resolved. The two aren't complements of each other; they answer different questions. Every auto-resolve decision is bounded by a policy citation match, a confidence floor, and a hard rupee ceiling &mdash; simultaneously.</p>
       </div>
     </div>
+  </div>
+</section>
+
+<section id="roadmap" style="border-top:1px solid var(--border);">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">04 &middot; What's next</span>
+      <h2>Built to extend, not just to demo.</h2>
+      <p class="desc">Every item below is a scoped, already-understood extension of code that already runs &mdash; not a research problem or a wishlist. Grouped the way a real production rollout would prioritize them: what's cheapest to harden before this touches a real ledger, what it actually takes to connect to Razorpay's own systems, what closes an already-documented edge case, and what can honestly wait.</p>
+    </div>
+
+    <div class="roadmap-axis" aria-hidden="true">
+      <span>&uarr; Foundational</span>
+      <span>Engineering lift: low &rarr; high</span>
+      <span>Transformative &uarr;</span>
+    </div>
+
+    <div class="roadmap-grid">
+      <div class="panel reveal roadmap-quadrant">
+        <span class="roadmap-tag good">Do first &middot; low lift, high impact</span>
+        <h3>Harden what's already proven</h3>
+        <ul class="roadmap-list">
+          <li><b>Integer-paise (Decimal) arithmetic</b>, replacing today's float rupees + &plusmn;&#8377;0.02 tolerance band.
+            <span class="roadmap-why">For Razorpay: the cheapest, fastest step toward trusting this on a real merchant ledger, where exact-paisa accounting isn't optional.</span></li>
+          <li><b>Postgres connection pooling</b> &mdash; already measured on this exact codebase: 92% of DB request time is connection overhead, not query work. A handful of call sites to change.
+            <span class="roadmap-why">For Razorpay: the same review-queue experience at real operator headcount, for a fraction of the infra cost.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel reveal roadmap-quadrant">
+        <span class="roadmap-tag accent">Roadmap centerpiece &middot; high lift, high impact</span>
+        <h3>Connect it to Razorpay's real systems</h3>
+        <ul class="roadmap-list">
+          <li><b>Live gateway &amp; bank settlement API connectors</b>, replacing today's synthetic, seeded CSV/XML generation.
+            <span class="roadmap-why">For Razorpay: the one change that turns a provable demo into the actual reconciliation backbone behind live settlements.</span></li>
+          <li><b>Kafka-based event ingestion</b>, replacing the tick-based stream simulator with genuinely real-time settlement events.
+            <span class="roadmap-why">For Razorpay: exceptions surface the same day they appear, not on the next scheduled run.</span></li>
+          <li><b>Horizontally-distributed matching</b> &mdash; proven at ~2,300 txn/s on a single laptop process; a Razorpay-wide rollout needs this to scale across every merchant, not just every transaction.
+            <span class="roadmap-why">For Razorpay: one reconciliation engine for the whole merchant base, not one instance per team that happens to need it.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel reveal roadmap-quadrant">
+        <span class="roadmap-tag warn">Structural correctness &middot; moderate lift, foundational</span>
+        <h3>Close the known, already-documented edges</h3>
+        <ul class="roadmap-list">
+          <li><b>General N-way settlement splits</b> &mdash; today's matcher handles 1:2 splits only.
+            <span class="roadmap-why">For Razorpay: covers the batching patterns 1:2 can't, without touching any of the matching logic that's already proven.</span></li>
+          <li><b>A global assignment solver</b>, replacing today's greedy bank-row consumption (safe and tested, but order-dependent).
+            <span class="roadmap-why">For Razorpay: removes the one documented "safe but not provably optimal" edge case before real scale makes it more likely to matter.</span></li>
+          <li><b>Explicit per-member attribution</b> for the reconciliation bridge's small (~0.13%), already-explained residual.
+            <span class="roadmap-why">For Razorpay: takes an honestly-reported residual to a fully-attributed, line-item-traceable zero.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel reveal roadmap-quadrant">
+        <span class="roadmap-tag muted">Defer until the above lands</span>
+        <h3>Polish, once the foundation is real</h3>
+        <ul class="roadmap-list">
+          <li><b>Full observability &amp; tracing</b> (e.g. Langfuse) &mdash; evaluated directly during this build, deferred specifically on self-hosted infra cost (16&#8239;GB+ RAM on a demo machine), not on any doubt about its value.
+            <span class="roadmap-why">For Razorpay: worth the infra cost the moment this runs on real traffic instead of a laptop demo.</span></li>
+          <li><b>Full RBAC</b> beyond today's two-tier analyst/manager approval, integrated with Razorpay's own SSO/IAM.
+            <span class="roadmap-why">For Razorpay: the access model a real finance org needs, not the single-reviewer model a demo gets away with.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="hint" style="margin-top:20px;">Nothing above changes the one rule this whole system is built on: the LLM still never touches a number, at any scale.</p>
   </div>
 </section>
 </main>

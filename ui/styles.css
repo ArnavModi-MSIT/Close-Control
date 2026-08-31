@@ -301,6 +301,34 @@ section { padding: 100px 24px; position: relative; }
 .value-card h4 { font-size: 1rem; margin-top: 14px; }
 .value-card p { color: var(--ink-soft); font-size: 0.9rem; margin-top: 8px; line-height: 1.55; }
 
+/* ---------- roadmap: a real effort/impact prioritization matrix,
+   not a decorative grid -- 4 real quadrants, each item drawn from this
+   project's own documented, already-reasoned-through limitations. ---------- */
+.roadmap-axis {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.04em;
+  color: var(--ink-mute); text-transform: uppercase; margin-bottom: 14px;
+}
+.roadmap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 860px) { .roadmap-grid { grid-template-columns: 1fr; } }
+.roadmap-quadrant h3 { font-size: 1.05rem; margin-top: 12px; }
+.roadmap-tag {
+  display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 0.68rem;
+  font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 5px 10px;
+  border-radius: 999px;
+}
+.roadmap-tag.good { background: var(--good-soft); color: var(--good); }
+.roadmap-tag.accent { background: var(--accent-soft); color: var(--accent); }
+.roadmap-tag.warn { background: var(--warn-soft); color: var(--warn); }
+.roadmap-tag.muted { background: var(--ground-2); color: var(--ink-mute); }
+.roadmap-list { margin-top: 16px; display: flex; flex-direction: column; gap: 16px; }
+.roadmap-list li { list-style: none; font-size: 0.92rem; line-height: 1.55; }
+.roadmap-list b { color: var(--ink); }
+.roadmap-why {
+  display: block; margin-top: 5px; color: var(--accent); font-size: 0.84rem;
+  font-style: italic; line-height: 1.5;
+}
+
 footer {
   padding: 56px 24px 80px; text-align: center; color: var(--ink-mute); font-size: 0.85rem;
   border-top: 1px solid var(--border);
