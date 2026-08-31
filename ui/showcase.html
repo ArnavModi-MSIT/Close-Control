@@ -47,7 +47,7 @@
   <div class="wrap">
     <div class="sec-head reveal">
       <span class="eyebrow">01 &middot; How it works</span>
-      <h2>Six layers, one rule: the model proposes, code decides.</h2>
+      <h2>One pipeline, one rule: the model proposes, code decides.</h2>
       <p class="desc">Every transaction flows through the same pipeline. Only the fraction the deterministic engine genuinely can't resolve on its own ever reaches an LLM &mdash; and even then, a separate, non-negotiable gate decides what happens next, and every escalation lands in a real human review queue. <b>For Razorpay:</b> this is the shape a finance-ops leader can actually sign off on &mdash; every rupee that moves is traceable to plain Python, not a model's judgment call, built on the kind of boring, battle-tested infrastructure (Postgres, Redis, scheduled batch jobs) a real ops team already knows how to operate and audit.</p>
     </div>
 
@@ -245,9 +245,9 @@
         <p>A live A/B on the same cases: with policy retrieval on, the model cited the correct policy 16/16 times. With it off, 1/16. Mean confidence was <b>identical (0.90) either way</b> &mdash; an ungrounded model doesn't sound less sure, it just confidently cites the wrong rule. That's exactly why the gate treats a policy-citation mismatch as a hard block, not a soft warning.</p>
       </div>
       <div class="value-card reveal">
-        <span class="vn">154</span>
+        <span class="vn">154<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> of 617</span></span>
         <h4>Cases investigated with real tool use, not one-shot guessing</h4>
-        <p>A hand-rolled ReAct loop &mdash; no agent framework &mdash; gives the model six deterministic tools over real settlement data and up to six rounds to decide what to check. Across the benchmark: <b>100% correct policy citation, zero hallucinated policies</b>. Every tool call and its result is recorded, so a reviewer audits the reasoning instead of trusting it.</p>
+        <p>A hand-rolled ReAct loop &mdash; no agent framework &mdash; gives the model seven deterministic tools over real settlement data and up to six rounds to decide what to check. Across the benchmark: <b>100% correct policy citation, zero hallucinated policies</b>. Every tool call and its result is recorded, so a reviewer audits the reasoning instead of trusting it. <b>154 is coverage, not a filter</b> &mdash; every one of the 617 escalated cases is eligible for this same investigation; 154 reflects how much of the backlog has been run through it so far, a number that grows with every batch, not a rule deciding which cases "deserve" deep tool use. The other 463 currently carry the single-shot classifier's proposal instead, gated by the exact same deterministic check either way.</p>
       </div>
       <div class="value-card reveal">
         <span class="vn">617<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> &rarr; 130</span></span>
@@ -360,7 +360,7 @@
 
 <footer>
   <p class="mono">AI Finance Controller &middot; Razorpay Buildathon, Track 04 &middot; seeded &amp; reproducible (RNG_SEED=42) &middot; every number computed from an actual pipeline run and embedded as a static snapshot, never hand-typed &mdash; see export_dashboard_data.py. Deterministic layers (matcher, gate, cash position, throughput) re-verified 2026-08-28; live-LLM figures (RAG ablation, investigation traces) are from their own logged runs and are not deterministically reproducible by design.</p>
-  <p class="mono" style="margin-top:10px;">Source: <a href="https://github.com/ArnavModi-MSIT/Reconcillation-Tool" style="color:var(--accent);">github.com/ArnavModi-MSIT/Reconcillation-Tool</a> &mdash; private during judging, opening publicly at submission.</p>
+  <p class="mono" style="margin-top:10px;">Source: <a href="https://github.com/ArnavModi-MSIT/Reconciliation-Tool" style="color:var(--accent);">github.com/ArnavModi-MSIT/Reconciliation-Tool</a> &mdash; private during judging, opening publicly at submission.</p>
 </footer>
 
 <script src="script.js"></script>
