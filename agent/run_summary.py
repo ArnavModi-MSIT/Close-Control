@@ -122,7 +122,7 @@ def _ollama_narrative(report, root_cause_summary: dict, model: str, host: str) -
 
 
 def build_run_summary(report, root_cause_summary: dict, provider: str | None = None,
-                       model: str = "llama3.1:8b", host: str = "http://localhost:11434") -> str:
+                       model: str = "llama3.1:8b", host: str = "http://127.0.0.1:11434") -> str:
     """provider: 'mock' (default) or 'ollama'. Falls back to the mock
     template (never raises) if 'ollama' is requested but the call fails --
     a run summary is a convenience, not something worth breaking a demo

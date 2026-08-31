@@ -20,7 +20,13 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "mock").lower()
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Literal loopback, not the hostname -- see CLAUDE.md's Environment section.
+# On this Windows machine, resolving "localhost" tries IPv6 first and only
+# falls back to IPv4 after a real ~2s timeout, measured via requests.get():
+# "localhost" averages 2053ms/call, "127.0.0.1" averages 23ms/call (8
+# calls each, dead consistent) -- an 89x difference on every single Ollama
+# HTTP call this project makes.
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 
 # confidence + risk gate thresholds (see gate.py)

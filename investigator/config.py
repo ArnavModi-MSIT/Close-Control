@@ -10,7 +10,9 @@ the authority boundary does not move.
 
 import os
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Literal loopback, not the hostname -- see agent/config.py's OLLAMA_HOST
+# for the measured reason (89x latency difference on this Windows machine).
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # Qwen3 family, not Llama (the model the rest of agent/ uses) -- originally
 # picked as qwen3:8b specifically because of measured tool-calling

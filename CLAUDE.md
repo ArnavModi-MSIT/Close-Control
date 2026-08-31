@@ -371,7 +371,23 @@ RazorPay/
   Query's polling needed `refetchIntervalInBackground: true` because of
   this); Git Bash on Windows silently rewrites absolute-looking Unix paths
   passed to `docker compose exec` (fix: prefix the command with
-  `MSYS_NO_PATHCONV=1`). When something looks broken, check whether it's
+  `MSYS_NO_PATHCONV=1`); resolving the hostname `localhost` for Ollama's
+  `http://localhost:11434` is dramatically slower than the literal
+  loopback IP on this machine — measured via `requests.get()` (8 calls
+  each, dead consistent): `localhost` averages 2053ms/call, `127.0.0.1`
+  averages 23ms/call, an **89x difference**, present on every single
+  Ollama HTTP call this project makes (Windows tries IPv6 first for
+  `localhost` and only falls back to IPv4 after a real timeout). Idea
+  sharpened by checking a peer Razorpay buildathon repo (`niy-ati/recon-
+  engine`) past its README into its own measured claim of the same
+  quirk — verified independently on this machine before trusting it, not
+  assumed from their number. Every `OLLAMA_HOST` default across
+  `agent/config.py`, `investigator/config.py`, `qa_agent/config.py`,
+  `agent/providers/ollama.py`, and `agent/run_summary.py` now defaults to
+  `http://127.0.0.1:11434` instead — verified end to end with a real live
+  call through `investigator/ollama_client.py` after the change (correct
+  response, no added latency), and `test_gate.py`/`test_review_api.py`
+  (110 total) unaffected. When something looks broken, check whether it's
   the actual code or a measurement/environment artifact before "fixing"
   it — this has gone wrong in both directions before.
 

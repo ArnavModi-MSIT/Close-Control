@@ -37,7 +37,9 @@ Respond with ONLY a JSON object (no markdown fences, no other text) with exactly
 class OllamaProvider(LLMProvider):
     name = "ollama"
 
-    def __init__(self, model: str, host: str = "http://localhost:11434"):
+    # Literal loopback, not the hostname -- see agent/config.py's OLLAMA_HOST
+    # for the measured reason (89x latency difference on this Windows machine).
+    def __init__(self, model: str, host: str = "http://127.0.0.1:11434"):
         self.model = model
         self.host = host.rstrip("/")
 

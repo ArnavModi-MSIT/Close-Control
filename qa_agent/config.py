@@ -13,7 +13,9 @@ numbers, citing where each number came from."
 
 import os
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# Literal loopback, not the hostname -- see agent/config.py's OLLAMA_HOST
+# for the measured reason (89x latency difference on this Windows machine).
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # Same model family as investigator/ for the same measured reason (Qwen3
 # family scored 0.933 F1 on a real tool-calling benchmark vs Llama 3.3
