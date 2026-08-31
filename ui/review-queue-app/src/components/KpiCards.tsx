@@ -1,7 +1,9 @@
 import type { StatsResponse } from "../types";
 import { rupees, rupeesCompact, statusLabel } from "../lib/format";
 
-function Kpi({ value, label, accent, title }: { value: string; label: string; accent?: boolean; title?: string }) {
+function Kpi({ value, label, accent, title, caption }: {
+  value: string; label: string; accent?: boolean; title?: string; caption?: string;
+}) {
   return (
     <div className="min-w-0 rounded-xl border border-border bg-surface p-4" title={title}>
       {/* A full-precision rupee string ("₹1,05,18,329.39") is 15-16
@@ -21,6 +23,17 @@ function Kpi({ value, label, accent, title }: { value: string; label: string; ac
         {label}
         {title && <span className="ml-1 text-ink-mute">*</span>}
       </div>
+      {/* Always-visible, not hover-only -- "Automation rate" (deterministic,
+          scored over all 2,072 transactions) and "AI auto-resolved" (agent
+          -driven, scored over the 617-case escalated queue) sit right next
+          to each other on this dashboard, and a reader skimming rather than
+          hovering could otherwise read "70% automation" as "70% handled by
+          AI" -- the opposite of what the number means. Found via a judge
+          -style frame-by-frame UI review, not assumed. The existing title
+          tooltip (the "*") still carries the exact numerator/denominator;
+          this caption is the same distinction made impossible to miss
+          without hovering at all. */}
+      {caption && <div className="mt-0.5 text-[0.66rem] leading-snug text-ink-mute">{caption}</div>}
     </div>
   );
 }
@@ -53,7 +66,8 @@ export function KpiCards({ stats, streamMode }: { stats: StatsResponse; streamMo
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <Kpi value={String(stats.total_cases)} label="Total cases" />
-      <Kpi value={String(stats.counts_by_status.auto_resolved)} label="AI auto-resolved" accent />
+      <Kpi value={String(stats.counts_by_status.auto_resolved)} label="AI auto-resolved" accent
+           caption="Agent-driven, of the 617-case queue" />
       <Kpi value={String(stats.counts_by_status.auto_closed ?? 0)} label="Auto-closed (re-verified)" accent />
       <Kpi value={String(needsHumanNow)} label="Needs a human" />
       <Kpi value={String(stats.investigated_count)} label="Investigated" />
@@ -113,7 +127,8 @@ export function KpiCards({ stats, streamMode }: { stats: StatsResponse; streamMo
       <Kpi value={cp ? cp.total_ledger_transactions.toLocaleString("en-IN") : "—"} label="Transactions processed"
            title={cp ? `${cp.automation_numerator.toLocaleString("en-IN")} of ${cp.total_ledger_transactions.toLocaleString("en-IN")} resolved with zero ML/LLM involvement -- the actual basis for the Automation rate figure.` : undefined} />
       <Kpi value={cp ? `${cp.automation_rate_pct.toFixed(1)}%` : "—"} label="Automation rate" accent
-           title={cp ? `${cp.automation_numerator.toLocaleString("en-IN")} of ${cp.total_ledger_transactions.toLocaleString("en-IN")} total ledger transactions -- not a percentage of the 617-case escalated queue.` : undefined} />
+           title={cp ? `${cp.automation_numerator.toLocaleString("en-IN")} of ${cp.total_ledger_transactions.toLocaleString("en-IN")} total ledger transactions -- not a percentage of the 617-case escalated queue.` : undefined}
+           caption="Deterministic, zero AI -- see AI auto-resolved separately" />
     </div>
   );
 }
