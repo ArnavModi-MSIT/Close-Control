@@ -55,6 +55,54 @@ EVIDENCE_LABEL_TO_FIELD = {
 }
 
 
+# Explanation-faithfulness check: does the model's own free-text root_cause
+# contradict the decision the gate actually reached? Idea sharpened by
+# checking a peer Razorpay buildathon repo (SuryaSK-dev/razorpay-ai-finance-
+# controller) past its README into its actual src/agent/explanation_validator.py,
+# which rejects an LLM explanation that uses language contradicting its own
+# verified status (e.g. a "MATCH" explanation that says "review"/"rejected").
+#
+# A naive port of that word list does NOT transfer cleanly to this project's
+# domain: build_evidence() shows the model real fields named match_status/
+# match_pass, so real root_cause text routinely and legitimately contains
+# "matched" (e.g. "Match status is 'matched (via pass: exact)'") -- a short
+# single-word list would false-positive constantly on our own evidence
+# vocabulary, not the model's decision language. Phrases below are
+# deliberately multi-word and decision-level rather than evidence-level,
+# and were verified against every real root_cause in data/audit_log.jsonl
+# and data/investigation_log.jsonl (1,018 real entries, both escalate and
+# auto_resolve) before being adopted: zero false positives.
+#
+# Deliberately informational only, same as unknown_evidence_citations was
+# before its own real-data verification pass promoted it to a hard gate
+# condition (see agent/gate.py's module docstring) -- this one hasn't had
+# that same scrutiny yet, so it's surfaced to a human reviewer, not wired
+# into auto_resolve.
+_ESCALATION_CONTRADICTING_PHRASES = (
+    "no further action needed", "no further action required", "fully resolved",
+    "issue resolved", "matter resolved", "case resolved", "reconciliation complete",
+    "nothing further to investigate", "safe to close", "safe to auto-resolve",
+)
+_AUTO_RESOLVE_CONTRADICTING_PHRASES = (
+    "requires manual review", "requires human review", "needs manual intervention",
+    "cannot be automatically resolved", "should be escalated", "escalate this case",
+    "insufficient evidence to resolve", "needs further investigation",
+)
+
+
+def check_root_cause_contradiction(root_cause: str, gate_decision: str) -> list[str]:
+    """Returns any decision-contradicting phrases found in root_cause, given
+    the gate's own final_decision ('escalate' or 'auto_resolve'). Empty list
+    means no contradiction detected -- not proof the text is fully faithful,
+    just that it doesn't contain a known red flag."""
+    if not root_cause or gate_decision not in ("escalate", "auto_resolve"):
+        return []
+    text = root_cause.lower()
+    phrases = (_ESCALATION_CONTRADICTING_PHRASES if gate_decision == "escalate"
+               else _AUTO_RESOLVE_CONTRADICTING_PHRASES)
+    return [p for p in phrases if p in text]
+
+
 def validate_evidence_citations(evidence_used: list[str], extra_valid_ids: frozenset = frozenset()) -> list[str]:
     """Returns whichever cited names in evidence_used do NOT correspond to a
     field actually shown in the evidence block -- i.e. the model citing

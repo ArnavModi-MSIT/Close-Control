@@ -164,6 +164,48 @@ def test_missing_amount_fields_treated_as_zero_not_a_crash():
     print("PASS -- None amount fields handled without crashing (amount_at_risk=0)")
 
 
+def test_root_cause_contradiction_flagged_informationally_not_gating():
+    """Idea sharpened by checking a peer Razorpay buildathon repo
+    (SuryaSK-dev/razorpay-ai-finance-controller) past its README into its
+    actual src/agent/explanation_validator.py, which rejects an LLM
+    explanation using language that contradicts its own verified status.
+    Verified against every real root_cause in data/audit_log.jsonl and
+    data/investigation_log.jsonl (1,018 entries) before adopting the
+    phrase lists: zero false positives. This test proves the flag fires
+    on genuinely contradicting text, and -- critically -- that it never
+    changes final_decision, since it hasn't earned that promotion yet
+    (unlike unknown_evidence_citations, which was verified against real
+    data and THEN made a hard gate condition)."""
+    gate = apply_gate(
+        resolution(exception_type="unexplained_shortage", policy_id="POLICY-007",
+                   root_cause="Investigation complete -- this issue is fully resolved, no further action needed."),
+        report_row(final_exception_type="unexplained_shortage"),
+    )
+    assert gate["final_decision"] == "escalate"  # unaffected by the flag -- not on the allowlist regardless
+    assert gate["root_cause_consistent"] is False
+    assert "fully resolved" in gate["root_cause_contradiction_flags"]
+    print("PASS -- contradicting root_cause text flagged, but does not change final_decision")
+
+
+def test_root_cause_consistent_on_normal_text():
+    """The default fixture text (and any ordinary evidence-citing
+    explanation) must NOT trip the check -- this is the false-positive
+    guard, mirroring the real-data sweep that motivated the phrase lists
+    in the first place. Checked on both outcomes since the accepted
+    phrase set differs by gate_decision."""
+    auto = apply_gate(resolution(), report_row())
+    assert auto["final_decision"] == "auto_resolve"
+    assert auto["root_cause_consistent"] is True
+
+    escalated = apply_gate(
+        resolution(exception_type="unexplained_shortage", policy_id="POLICY-007"),
+        report_row(final_exception_type="unexplained_shortage"),
+    )
+    assert escalated["final_decision"] == "escalate"
+    assert escalated["root_cause_consistent"] is True
+    print("PASS -- ordinary root_cause text never false-flags on either outcome")
+
+
 ALL_TESTS = [
     test_success_all_conditions_met,
     test_policy_missing,
@@ -174,6 +216,8 @@ ALL_TESTS = [
     test_insufficient_evidence,
     test_amount_exceeds_risk_ceiling,
     test_missing_amount_fields_treated_as_zero_not_a_crash,
+    test_root_cause_contradiction_flagged_informationally_not_gating,
+    test_root_cause_consistent_on_normal_text,
 ]
 
 

@@ -49,7 +49,7 @@ inversion a financial control boundary must not allow.
 
 from . import config
 from .policy_kb import get_policy
-from .evidence import validate_evidence_citations
+from .evidence import validate_evidence_citations, check_root_cause_contradiction
 
 
 def _compute_amount_at_risk(report_row: dict) -> float:
@@ -164,6 +164,18 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
         reasons = ["all gate conditions satisfied (matcher-authoritative type, "
                    "allowlisted, policy_id consistent, confidence/evidence/risk/citations all pass)"]
 
+    # Explanation-faithfulness check, informational only -- does the agent's
+    # own free-text root_cause use language contradicting the decision the
+    # gate just reached (e.g. "fully resolved" on a case that's escalating,
+    # or "requires manual review" on one that's auto-resolving)? Computed
+    # after auto_resolve above since it needs the final decision, not a
+    # per-condition input to it. See agent/evidence.py's own docstring for
+    # why this is informational, not a hard gate condition like the
+    # evidence-citation check above -- it hasn't yet had that same
+    # real-data-driven promotion process.
+    root_cause_contradiction_flags = check_root_cause_contradiction(
+        getattr(resolution, "root_cause", ""), "auto_resolve" if auto_resolve else "escalate")
+
     # Structured, per-condition PASS/FAIL breakdown -- purely a presentation
     # layer over the seven booleans already computed above, not new gate
     # logic on top of what auto_resolve already checked. `gate_reasons`
@@ -233,4 +245,6 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
         "risk_ceiling_used": config.AUTO_RESOLVE_RISK_CEILING_RUPEES,
         "unknown_evidence_citations": unknown_evidence_citations,
         "all_evidence_citations_valid": len(unknown_evidence_citations) == 0,
+        "root_cause_contradiction_flags": root_cause_contradiction_flags,
+        "root_cause_consistent": len(root_cause_contradiction_flags) == 0,
     }

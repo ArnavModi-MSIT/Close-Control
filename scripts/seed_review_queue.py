@@ -223,6 +223,15 @@ def _primary_from_investigation(inv_entry: dict, report_row: dict) -> dict:
         # session, since every case seeded so far took the "unchanged" path,
         # which never calls this function at all).
         evidence_used=inv_entry.get("evidence_used") or [],
+        # apply_gate() also now reads resolution.root_cause (for
+        # check_root_cause_contradiction() -- see agent/evidence.py). Same
+        # class of gap as evidence_used above, caught while wiring the new
+        # check in rather than discovered live: this SimpleNamespace would
+        # otherwise silently feed an empty string into that check for every
+        # investigator-primary case, making it a permanent no-op here even
+        # though apply_gate() itself never raises (getattr default, not an
+        # AttributeError this time) -- fixed at the source instead.
+        root_cause=inv_entry.get("root_cause") or "",
     )
     # investigation_log.jsonl stores each tool call's own record (not an
     # InvestigationResult object), so tool_evidence_ids() itself can't be

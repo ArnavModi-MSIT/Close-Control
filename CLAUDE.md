@@ -1836,6 +1836,68 @@ involvement, computable before any call is made) — this change doesn't
 touch that function at all, only what `apply_gate()` itself requires once
 a proposal exists.
 
+**Root-cause explanation-faithfulness check (`agent/evidence.py`'s
+`check_root_cause_contradiction()`), informational only, not yet a gate
+condition.** Idea sharpened by checking a peer Razorpay buildathon repo
+(`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into its
+actual `src/agent/explanation_validator.py`, which rejects an LLM
+explanation using language that contradicts its own verified status (a
+"MATCH" explanation must not say "review"/"rejected"). This project had no
+equivalent — `agent/gate.py`'s citation/policy-ID checks verify the
+STRUCTURED fields (`exception_type`, `policy_id`, `evidence_used`) are
+grounded, but nothing checked whether the agent's own free-text
+`root_cause` — the field a human reviewer actually reads in
+`DetailPanel.tsx` — could contradict the decision the gate reaches.
+
+**A naive port of the peer's word list does NOT transfer cleanly to this
+project's domain, checked before assuming otherwise.** `build_evidence()`
+shows the model real `match_status`/`match_pass` fields, so real
+`root_cause` text routinely and legitimately contains "matched" (e.g.
+`"Match status is 'matched (via pass: exact)'"` — a genuine string pulled
+from a real auto-resolved case). A short single-word contradiction list
+(their `{"matched", "approved", "settled"}`) would false-positive
+constantly on this project's own evidence vocabulary, not on genuine
+decision-contradicting language. Phrase lists were built deliberately
+multi-word and decision-level instead (`"fully resolved"`, `"no further
+action needed"` for an escalating case; `"requires manual review"`,
+`"cannot be automatically resolved"` for an auto-resolving one) and
+**verified against every real root_cause in `data/audit_log.jsonl` and
+`data/investigation_log.jsonl` (1,018 real entries spanning both
+`escalate` and `auto_resolve`) before being adopted: zero false
+positives.**
+
+Wired into `apply_gate()` as two new dict fields
+(`root_cause_contradiction_flags`, `root_cause_consistent`), computed
+after `auto_resolve` is decided (since the check needs the final
+decision, not a per-condition input to it) — **deliberately NOT a hard
+gate condition**, matching the same cautious-then-promote path
+`unknown_evidence_citations` itself followed (informational first, only
+later promoted to a hard block once verified against real data). This
+check hasn't had that same scrutiny across a large enough live corpus
+yet, so it stays a signal for a human/future review pass, not something
+that can flip `final_decision` today.
+
+**A real, concrete bug found and fixed while wiring this in, not
+theoretical** — the exact same class of gap CLAUDE.md already documented
+once for `evidence_used`: `seed_review_queue.py`'s
+`_primary_from_investigation()` builds a `SimpleNamespace` standing in for
+`resolution` when recomputing the gate from a raw `investigation_log.jsonl`
+entry, and it never carried `root_cause` at all. Unlike the earlier
+`evidence_used` gap (a hard `AttributeError`), this one would have failed
+silently — `apply_gate()`'s `getattr(resolution, "root_cause", "")`
+default means no crash, just a permanently-empty string fed into the
+check for every investigator-primary case, making it a silent no-op there
+specifically. Fixed by threading `root_cause=inv_entry.get("root_cause")
+or ""` through the `SimpleNamespace`. Verified: `test_gate.py` (11/11,
+two new tests — one proving the flag fires on genuinely contradicting
+text without changing `final_decision`, one proving ordinary evidence-
+citing text on both outcomes never false-flags), `test_agent_immutability.py`
+(7/7, unaffected), `test_review_api.py` (97/97, unaffected), and a real
+`seed_review_queue.py` re-seed against the live 617-case demo database
+(617 unchanged, 0 conflicts — confirming this stays purely additive at
+the `apply_gate()` level, since neither new field is persisted to the
+database or the case-detail API yet).
+
 **`policy_kb.py` grounded in real RBI/NPCI regulatory frameworks**, not
 invented text — added after checking each claim against actual circulars/
 SOPs, not a generic web summary. `POLICY-007` (`unexplained_shortage`) and
