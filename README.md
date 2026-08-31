@@ -105,19 +105,19 @@ one is computed — this README summarizes, it doesn't replace it.
 works):**
 
 ```bash
-python run_demo.py                    # env checks, live pipeline, seed, serve
-python run_demo.py --skip-server      # checks + pipeline only
+python scripts/run_demo.py                    # env checks, live pipeline, seed, serve
+python scripts/run_demo.py --skip-server      # checks + pipeline only
 ```
 
 **Full pipeline, in order:**
 
 ```bash
-python generate_data.py                          # synthetic dataset + ingestion round-trip
+python scripts/generate_data.py                          # synthetic dataset + ingestion round-trip
 python run_matcher.py                             # deterministic matching
-python evaluate.py                                # scores the matcher against ground truth
-python run_agent.py --mode mock                   # $0 mock provider (default demo mode)
-python run_cash_position.py
-python seed_review_queue.py                       # needs a local Postgres (see below)
+python scripts/evaluate.py                                # scores the matcher against ground truth
+python scripts/run_agent.py --mode mock                   # $0 mock provider (default demo mode)
+python scripts/run_cash_position.py
+python scripts/seed_review_queue.py                       # needs a local Postgres (see below)
 cd ui/review-queue-app && npm install && npm run build && cd ../..
 python -m uvicorn review_backend.main:app --port 8000
 # open http://127.0.0.1:8000/review-queue/
@@ -143,8 +143,8 @@ network dependency, nothing that can fail due to venue wifi:
 
 ```bash
 ollama pull qwen3:1.7b
-python run_investigator.py --n 1
-python run_qa.py "How much cash is confirmed right now?"
+python scripts/run_investigator.py --n 1
+python scripts/run_qa.py "How much cash is confirmed right now?"
 ```
 
 ---
@@ -162,14 +162,21 @@ investigator/      tool-using multi-step investigation agent
 qa_agent/          free-text Settlement Q&A agent
 airflow/           closed-loop re-verification scheduler (opt-in)
 ui/                demo reel + the React/TypeScript review-queue app
+scripts/           every CLI entrypoint (run_*.py, evaluate.py, generate_data.py, ...)
+tests/             every test_*.py
 ```
 
-Every layer has a corresponding `test_*.py` at the repository root
+`run_matcher.py`, `corrections.py`, and `journal_entries.py` stay at the
+repository root rather than in `scripts/` — `review_backend/main.py`
+imports all three directly at runtime, so they need to be importable as
+top-level modules, not just runnable as scripts.
+
+Every layer has a corresponding `test_*.py` in `tests/`
 (matching logic, gate branch coverage, ingestion round-trips, chargeback
 and loan-recovery detection, adversarial prompt-injection resistance,
 ground-truth isolation, exhaustive exception-priority coverage, agent
 -immutability, and more) — run any of them directly, e.g.
-`python test_gate.py`.
+`python tests/test_gate.py`.
 
 ---
 
