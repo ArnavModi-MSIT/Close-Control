@@ -177,6 +177,29 @@ check("confirmed + in_transit rupees sum to the projected figure (by definition)
       abs((_cp["confirmed_rupees"] + _cp["in_transit_rupees"]) - _cp["projected_cash_position_rupees"]) < 0.02,
       str(_cp))
 
+section("zero-argument tools tolerate a hallucinated kwarg (regression -- observed live)")
+# qwen3:1.7b was observed, live, calling get_cash_position_summary with
+# invented keyword arguments three separate rounds in a row (each a
+# different guess), getting a hard TypeError every time since the tool
+# genuinely takes none -- burning its whole tool-round budget before
+# giving up and fabricating an answer (caught by grounding, but the real
+# data was never fetched). These three replay the exact call shapes seen
+# in that failure and confirm they now succeed with the real number,
+# rather than merely not-crashing.
+_hallucinated_calls = [
+    dict(cash_position_summary="confirmed, in_transit, held/at-risk, projected"),
+    dict(confirmed=0, in_transit=0, held_at_risk=0, projected=0),
+    dict(confirmed=True, in_transit=True, held=True, projected=True),
+]
+for _kwargs in _hallucinated_calls:
+    _result = get_cash_position_summary(_ctx, **_kwargs)
+    check(f"get_cash_position_summary(**{_kwargs}) returns the real figure, not a TypeError",
+          _result.get("confirmed_rupees") == _cp["confirmed_rupees"], str(_result))
+check("get_portfolio_summary tolerates an unexpected kwarg the same way",
+      get_portfolio_summary(_ctx, whatever="junk")["total_transactions"] == _summary["total_transactions"])
+check("get_root_cause_summary tolerates an unexpected kwarg the same way",
+      get_root_cause_summary(_ctx, foo=1)["root_cause_clusters"] == _rc["root_cause_clusters"])
+
 
 # ---------------------------------------------------------------- loop.py, fake client
 

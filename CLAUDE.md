@@ -3320,8 +3320,48 @@ test proves a number that ISN'T a real sum/difference of grounded values
 (a fabricated `12345` alongside the same real `497`/`20`) is still
 correctly flagged.
 
+**A fourth real bug, also found live by the user (not by me), one layer
+upstream of the first three**: a "How much cash is confirmed right now,
+and what's in transit?" answer fabricated plausible-looking round numbers
+(`$12,345.00` confirmed, `$7,890.00` in transit — also the wrong currency
+symbol, a further tell) and grounding correctly flagged both as
+ungrounded. Tracing the real tool trace showed why: `get_cash_position_summary`
+takes zero real arguments (`get_cash_position_summary(ctx) -> dict`, the
+schema declares `"parameters": {"properties": {}}`), but the smaller
+local model (`qwen3:1.7b`) invented keyword arguments for it anyway,
+three separate rounds in a row, each a different guess
+(`cash_position_summary="confirmed, in_transit, ..."`, then
+`confirmed=0, in_transit=0, held_at_risk=0, projected=0`, then
+`confirmed=true, in_transit=true, held=true, projected=true`) — every one
+a hard `TypeError`, since the tool genuinely accepts none. By round 4 the
+model had burned its whole budget on a tool it never once called
+successfully and fabricated an answer instead of saying so. Grounding
+caught the fabrication exactly as designed (this is the safety net
+working, not failing), but the deeper problem — the real cash position
+was never actually fetched, on a question that exists specifically to
+answer it — sat one layer upstream of what grounding can fix.
+
+Root cause is specific to zero-argument tools: `get_portfolio_summary`,
+`get_root_cause_summary`, and `get_cash_position_summary` (the three
+portfolio-level tools with no real parameters at all, `qa_agent/tools.py`)
+have nothing a kwarg could legitimately configure, so any keyword
+argument a model passes to them is by construction hallucinated noise —
+unlike investigator/'s per-transaction tools, where an undeclared
+argument is a real self-correctable mistake worth surfacing back to the
+model as an error (see investigator/'s own "model self-corrects" note).
+Fixed by giving all three a trailing `**_ignored` and discarding it,
+rather than erroring — the safe move specifically because there is no
+real argument space to protect here; silently ignoring a hallucinated
+kwarg cannot let bad data through, since the tool's actual computation
+never reads it. Verified by replaying the exact three failing call shapes
+observed live against the real dataset: all three now return the real,
+correct confirmed figure (₹1,05,18,329.39, matching §6) on the first try
+instead of a `TypeError`. `test_qa_agent.py` gained a permanent
+regression section proving this (not just that the call doesn't crash —
+that it returns the identical real number a clean call would).
+
 **Verification, in increasing order of realism.** `test_qa_agent.py`
-(29 assertions): `grounding.py`'s extraction/tolerance/adversarial-catch
+(34 assertions): `grounding.py`'s extraction/tolerance/adversarial-catch
 logic proven directly (a genuinely invented number IS caught; a
 genuinely grounded one, and a trivially-rounded restatement of one, are
 both correctly waved through); all four new tools proven against the

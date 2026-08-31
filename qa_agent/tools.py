@@ -35,12 +35,22 @@ from investigator.tools import (  # noqa: F401 -- re-exported for qa_agent/tool_
 from . import config
 
 
-def get_portfolio_summary(ctx: ToolContext) -> dict:
+def get_portfolio_summary(ctx: ToolContext, **_ignored) -> dict:
     """Headline counts across the whole dataset -- clean, matcher-level
     auto-resolved, and escalated, plus the escalated population's total
     amount at risk and its breakdown by exception type. The Q&A-shaped
     equivalent of evaluate.py's own match-rate headline, computed the same
-    way (over ctx.report, never ground_truth.csv)."""
+    way (over ctx.report, never ground_truth.csv).
+
+    **_ignored: this tool takes no real arguments (the schema declares
+    empty parameters), but a smaller local model (observed live with
+    qwen3:1.7b) sometimes hallucinates keyword arguments for a
+    zero-parameter tool anyway, and previously got a hard TypeError on
+    every attempt -- burning tool rounds until the model gave up and
+    fabricated an answer instead (caught by grounding.py's check, but
+    the real data was never even fetched). Since there is nothing real
+    for a kwarg to misconfigure here, silently discarding whatever the
+    model invents is safe and lets the call succeed on the first try."""
     report = ctx.report
     total = len(report)
     clean = int(report["is_clean"].sum())
@@ -109,11 +119,15 @@ def search_cases(ctx: ToolContext, exception_type: str = None, min_amount_rupees
     }
 
 
-def get_root_cause_summary(ctx: ToolContext) -> dict:
+def get_root_cause_summary(ctx: ToolContext, **_ignored) -> dict:
     """Deterministic root-cause clustering (matching/root_cause.py),
     exposed as a Q&A tool -- the same computation review_backend/main.py's
     GET /api/root-cause-clusters and ui/showcase.html's "617 -> 130" card
-    already surface, reused rather than re-derived."""
+    already surface, reused rather than re-derived.
+
+    **_ignored: see get_portfolio_summary()'s docstring -- same
+    zero-real-arguments tool, same defensive tolerance for a hallucinated
+    kwarg from a smaller model."""
     from matching.root_cause import cluster_escalated_cases, summarize
 
     clusters = cluster_escalated_cases(ctx.report)
@@ -138,10 +152,18 @@ def get_root_cause_summary(ctx: ToolContext) -> dict:
     }
 
 
-def get_cash_position_summary(ctx: ToolContext) -> dict:
+def get_cash_position_summary(ctx: ToolContext, **_ignored) -> dict:
     """cash_position/engine.py's own snapshot (confirmed / in-transit /
     at-risk / projected), exposed as a Q&A tool -- same DEFAULT_AS_OF every
-    other money figure in this app uses, never re-derived."""
+    other money figure in this app uses, never re-derived.
+
+    **_ignored: see get_portfolio_summary()'s docstring -- same
+    zero-real-arguments tool, same defensive tolerance for a hallucinated
+    kwarg from a smaller model. This is the exact tool that was observed
+    live failing 3 rounds in a row on invented kwargs
+    (cash_position_summary=..., confirmed=0/in_transit=0/..., then
+    confirmed=true/in_transit=true/...) before the model gave up and
+    fabricated numbers instead."""
     from cash_position.engine import build_cash_position
     from cash_position.config import DEFAULT_AS_OF
 
