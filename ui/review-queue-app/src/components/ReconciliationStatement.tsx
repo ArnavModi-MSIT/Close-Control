@@ -32,7 +32,7 @@ export function ReconciliationStatement() {
   const { data: stmt, isLoading, isError, refetch } = useReconciliationStatement(open);
 
   return (
-    <div className="rounded-2xl border border-border bg-surface shadow-sm">
+    <div className="rounded-2xl border border-border border-l-4 border-l-good bg-surface shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

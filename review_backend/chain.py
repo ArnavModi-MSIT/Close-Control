@@ -109,17 +109,38 @@ def verify_chain(conn: psycopg.Connection) -> dict:
     pre_chain_rows = 0
     broken_at = None
     checked = 0
+    # A per-row summary of what was ACTUALLY walked and verified above --
+    # this was already being computed (every row is read and hashed
+    # either way), just never returned. Added after a live demo review
+    # found the verify-chain UI panel showing only 4 aggregate numbers
+    # read as "empty" next to every other panel's real row list -- this
+    # doesn't change what's verified, only what's disclosed about it, so
+    # the security-critical comparison logic above is untouched.
+    verified_rows = []
 
     for row in rows:
         stored = row["chain_hash"]
         if stored is None:
             pre_chain_rows += 1
             prev_hash = GENESIS_HASH  # restart the chain at the first post-migration row
+            verified_rows.append({
+                "id": row["id"], "transaction_id": row["transaction_id"],
+                "reviewer_name": row["reviewer_name"], "decision": row["decision"],
+                "resulting_status": row["resulting_status"], "created_at": row["created_at"],
+                "verified": None,  # pre-chain: no hash to check at all, not "checked and passed"
+            })
             continue
 
         expected = compute_chain_hash(prev_hash, dict(row))
         checked += 1
-        if expected != stored:
+        row_ok = expected == stored
+        verified_rows.append({
+            "id": row["id"], "transaction_id": row["transaction_id"],
+            "reviewer_name": row["reviewer_name"], "decision": row["decision"],
+            "resulting_status": row["resulting_status"], "created_at": row["created_at"],
+            "verified": row_ok,
+        })
+        if not row_ok:
             broken_at = {"id": row["id"], "review_uuid": row["review_uuid"],
                           "transaction_id": row["transaction_id"],
                           "expected": expected, "stored": stored}
@@ -132,4 +153,5 @@ def verify_chain(conn: psycopg.Connection) -> dict:
         "checked": checked,
         "intact": broken_at is None,
         "broken_at": broken_at,
+        "rows": verified_rows,
     }

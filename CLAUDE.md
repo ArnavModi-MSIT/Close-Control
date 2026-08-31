@@ -2055,6 +2055,21 @@ ad hoc. Of 13 real routes, exactly 2 had zero frontend caller:
    "pre_chain_rows": 0, "checked": 40, "intact": true, "broken_at": null}`
    — a real "VERIFIED INTACT" badge, not a mock.
 
+   **Follow-up, from a live demo review**: the first version of this panel
+   showed only those 4 aggregate numbers and read as visibly empty next
+   to every other panel's real row list. `chain.verify_chain()` was
+   already walking and hashing every review row to produce those
+   numbers — the per-row detail was computed either way, just never
+   returned. Extended it to also return a `rows` array (transaction_id,
+   reviewer, decision, timestamp, per-row `verified` — `true`/`false`/
+   `null` for pre-chain, never conflating "not checked" with "checked
+   and failed"), with the security-critical hash-comparison logic itself
+   completely untouched — this only changes what's disclosed about a
+   check that already ran. `AuditChainStatus.tsx` now renders a real,
+   most-recent-first scrollable list of individual review events, each
+   with its own genuine verified badge. `test_review_api.py` (97/97)
+   confirms the extension didn't change the endpoint's existing contract.
+
 2. **`corrections.py`'s correction memory** — real and tested
    (`test_corrections.py`, 13 assertions) but write-only from this UI's
    own point of view: `submit_review()` appends to

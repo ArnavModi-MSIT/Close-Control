@@ -418,12 +418,27 @@ export interface CorrectionsResponse {
 // just a single row's own hash. Deliberately never cached (see the
 // endpoint's own docstring) -- caching an integrity check would defeat
 // the point of it re-deriving the answer every time.
+export interface AuditChainRow {
+  id: number;
+  transaction_id: string;
+  reviewer_name: string;
+  decision: string;
+  resulting_status: string;
+  created_at: string;
+  // null = pre-chain row (predates the chain_hash column, no hash to
+  // check at all -- distinct from false, which means a real check ran
+  // and failed).
+  verified: boolean | null;
+}
+
 export interface AuditChainVerification {
   total_rows: number;
   pre_chain_rows: number;
   checked: number;
   intact: boolean;
-  broken_at: number | null;
+  broken_at: { id: number; review_uuid: string; transaction_id: string;
+               expected: string; stored: string } | null;
+  rows: AuditChainRow[];
 }
 
 // What GET /api/cases/bulk-review accepts -- deliberately a NARROWER

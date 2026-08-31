@@ -97,7 +97,7 @@ export function QAPanel() {
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-surface shadow-sm">
+    <div className="rounded-2xl border border-border border-l-4 border-l-accent bg-surface shadow-sm">
       <button type="button" onClick={() => setOpen((v) => !v)}
               className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
               aria-expanded={open}>
