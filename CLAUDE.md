@@ -1986,6 +1986,59 @@ own decision (`reviewer_name="system:closed-loop-reverification"`,
 the decision string itself carries the "not human" semantic) — see the
 Layer 7 section below.
 
+**Matcher-auto-resolved visibility (`GET /api/matcher-auto-resolved`,
+new)** — closes a real demo-visibility gap, not a data or decision gap:
+the ~58 transactions the deterministic matcher itself resolves
+(`timing_lag_beyond_t2`, `fee_variance`, `loan_recovery_deduction`) are,
+by design, correctly invisible in the review queue — only cases the
+matcher could NOT resolve ever escalate there. That's the right scope
+for a human-review tool, but it also meant the matcher's own 70.2%
+zero-LLM resolution rate, and every one of the 18 real Razorpay Capital
+loan recoveries (the 4th data source), was invisible everywhere in this
+project's UI — nothing to click on, nothing to show in a demo video.
+Found by the user asking, live, where the loan-recovery book actually
+shows up.
+
+Computed live against `CASH_POSITION_DATA_DIR` (matcher's `report` +
+`ledger_check` output joined for the loan-specific fields, since
+`report.py`'s own row dict deliberately doesn't carry `loan_id`/
+`loan_recovery_amount_rupees` through — see `matching/` section above),
+same short-TTL best-effort Redis cache pattern as `root_cause_clusters()`.
+Purely observational and read-only — nothing here is reviewable or
+actionable, matching what these transactions actually are: already,
+correctly, closed. `exception_type` query param filters the returned
+items only; the summary counts always reflect the full population so a
+filtered view never looks like the KPI totals shifted.
+
+**A real NaN-JSON bug, found and fixed before this ever reached a
+client** — the first version tried `items_df.where(items_df.notnull(),
+None)` to sanitize the `loan_id`/`loan_recovery_amount_rupees` columns
+(`NaN` for the 40 non-loan rows) before serializing. That doesn't work:
+assigning `None` into a `float64`-typed pandas column gets silently
+coerced straight back to `NaN`, since a float64 column has no real slot
+for a Python `None` — confirmed live, this produced a genuine 500
+(`ValueError: Out of range float values are not JSON compliant`), the
+same NaN-serialization bug class this project has hit for real more than
+once elsewhere (`investigator/loop.py`'s `json_safe()`,
+`get_settlement_details()`'s `matched_utrs`). Fixed by converting to
+plain Python dicts first, then sanitizing the native floats — sidesteps
+the dtype-coercion trap entirely, the same lesson `json_safe()` already
+encodes, just not yet applied here until this endpoint needed it.
+
+Frontend: `ui/review-queue-app/src/components/MatcherAutoResolved.tsx`,
+a new collapsible panel matching `RootCauseClusters.tsx`'s established
+shape — summary stats (total / loan recoveries / timing lag / fee
+variance), a type filter, and a row list. Loan-recovery rows carry a
+`CAPITAL RECOVERY` badge and show the real `loan_id` plus the exact
+recovered amount, rather than the generic expected-vs-observed pair
+every other row shows — the whole point of the panel is making that
+specific population visible, not just listing rows. Verified live in the
+browser: all 58 render under "All," filtering to `loan_recovery_deduction`
+correctly shows all 18 real recoveries with their real loan IDs and
+amounts (e.g. `trn-loan000` → `loan_wQ9AmJDKYz`, ₹99.63 recovered,
+matching the transaction's own `net_delta_rupees` exactly). `test_review_api.py`
+(97/97) unaffected.
+
 **Bulk cluster review (`POST /api/cases/bulk-review`, `GET
 /api/root-cause-clusters`)** — the review-side counterpart to
 `matching/root_cause.py`'s clustering: a reviewer who trusts a cluster's

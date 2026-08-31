@@ -51,6 +51,12 @@ def reconciliation_statement_key(data_dir: str, as_of_iso: str) -> str:
     return f"reconciliation_statement:v1:{data_dir}:{as_of_iso}"
 
 
+def matcher_auto_resolved_key(data_dir: str) -> str:
+    """No as_of component, same reasoning as root_cause_clusters_key below --
+    a pure function of the matcher's own report, not time-dependent."""
+    return f"matcher_auto_resolved:v1:{data_dir}"
+
+
 def root_cause_clusters_key(data_dir: str) -> str:
     """No as_of component -- unlike the two keys above, root-cause
     clustering (matching/root_cause.py) has no as-of dependency at all,

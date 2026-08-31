@@ -366,6 +366,31 @@ export interface RootCauseClustersResponse {
   clusters: RootCauseCluster[];
 }
 
+// Mirrors GET /api/matcher-auto-resolved exactly -- the ~58 transactions
+// the deterministic MATCHER itself resolved (timing_lag_beyond_t2,
+// fee_variance, loan_recovery_deduction), zero LLM/human involvement,
+// and never entering the review queue at all since only cases the
+// matcher could NOT resolve escalate there. loan_id/
+// loan_recovery_amount_rupees are only ever non-null for
+// loan_recovery_deduction rows -- the 4th data source (Razorpay
+// Capital's recovery ledger), otherwise invisible anywhere in this UI.
+export interface MatcherAutoResolvedItem {
+  transaction_id: string;
+  merchant_id: string;
+  final_exception_type: string;
+  ledger_expected_net_rupees: number;
+  observed_net_rupees: number;
+  net_delta_rupees: number;
+  loan_id: string | null;
+  loan_recovery_amount_rupees: number | null;
+}
+
+export interface MatcherAutoResolvedResponse {
+  total_matcher_auto_resolved: number;
+  by_exception_type: Record<string, number>;
+  items: MatcherAutoResolvedItem[];
+}
+
 // What GET /api/cases/bulk-review accepts -- deliberately a NARROWER
 // decision set than a single-case review (see review_backend/models.py's
 // BulkReviewRequest docstring for why "overridden"/"reverted" are excluded).

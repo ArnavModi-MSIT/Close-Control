@@ -18,6 +18,7 @@ for the full design rationale.
 """
 
 import json
+import math
 import os
 import uuid
 import datetime as dt
@@ -687,6 +688,75 @@ def root_cause_clusters():
 
     key = cache.root_cause_clusters_key(CASH_POSITION_DATA_DIR)
     return cache.cached_or_compute(key, ROOT_CAUSE_CLUSTERS_CACHE_TTL_SECONDS, _compute)
+
+
+@app.get("/api/matcher-auto-resolved")
+def matcher_auto_resolved(exception_type: str | None = None):
+    """The transactions the deterministic MATCHER itself resolved --
+    timing_lag_beyond_t2, fee_variance, duplicate_retry,
+    loan_recovery_deduction -- zero LLM/human involvement, and (by design)
+    never entering the review queue at all, since only cases the matcher
+    could NOT resolve escalate there. That correctly keeps the review
+    queue focused on what needs a human, but it also means these ~58
+    transactions -- including all 18 real Razorpay Capital loan recoveries,
+    the 4th data source -- were invisible everywhere in this demo's UI.
+    This is the one place to see them as real, individual transactions,
+    not just an aggregate percentage in a KPI card.
+
+    Computed live against CASH_POSITION_DATA_DIR, same short-TTL
+    best-effort Redis cache pattern as root_cause_clusters() above --
+    purely derived from the matcher's report + ledger_check output, never
+    touches Postgres. exception_type filters the returned items only;
+    the summary counts always reflect the full matcher-auto-resolved
+    population so the KPI-style totals never shift under a filter."""
+    def _compute():
+        report, _, ledger_check = run_matcher(CASH_POSITION_DATA_DIR)
+        mask = report["final_exception_type"].notna() & report["auto_resolve_eligible"]
+        resolved = report[mask].copy()
+
+        # report.py's own row dict deliberately doesn't carry loan_id /
+        # loan_recovery_amount_rupees through (see matching/report.py) --
+        # pulled here from ledger_check's real output instead, the actual
+        # source these two fields live in.
+        loan_fields = ledger_check.set_index("transaction_id")[["loan_id", "loan_recovery_amount_rupees"]]
+        resolved = resolved.join(loan_fields, on="transaction_id")
+
+        by_type = {k: int(v) for k, v in resolved["final_exception_type"].value_counts().items()}
+
+        items_df = resolved[[
+            "transaction_id", "merchant_id", "final_exception_type",
+            "ledger_expected_net_rupees", "observed_net_rupees", "net_delta_rupees",
+            "loan_id", "loan_recovery_amount_rupees",
+        ]].sort_values("transaction_id")
+        # NaN (every non-loan row's loan_id/loan_recovery_amount_rupees) is
+        # not valid JSON -- Starlette's JSONResponse sets allow_nan=False
+        # and refuses to serialize it, the exact bug class this project has
+        # hit for real more than once elsewhere (investigator/loop.py's
+        # json_safe(), get_settlement_details()'s matched_utrs). Sanitizing
+        # on the DataFrame itself doesn't work here -- `.where(notnull(),
+        # None)` on a float64 column just gets silently coerced straight
+        # back to NaN by pandas, since a float64 column has no real slot
+        # for a Python None (confirmed live: this was the actual bug on
+        # the first version of this endpoint). Converting to plain dicts
+        # FIRST, then sanitizing those native Python floats, sidesteps the
+        # dtype coercion entirely.
+        items = [
+            {k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in row.items()}
+            for row in items_df.to_dict(orient="records")
+        ]
+
+        return {
+            "total_matcher_auto_resolved": int(mask.sum()),
+            "by_exception_type": by_type,
+            "items": items,
+        }
+
+    key = cache.matcher_auto_resolved_key(CASH_POSITION_DATA_DIR)
+    result = cache.cached_or_compute(key, ROOT_CAUSE_CLUSTERS_CACHE_TTL_SECONDS, _compute)
+    if exception_type:
+        filtered = [it for it in result["items"] if it["final_exception_type"] == exception_type]
+        return {**result, "items": filtered}
+    return result
 
 
 @app.post("/api/reverify")

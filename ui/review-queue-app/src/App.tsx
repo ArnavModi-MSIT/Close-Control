@@ -7,6 +7,7 @@ import { InvestigationDonut } from "./components/charts/InvestigationDonut";
 import { QAPanel } from "./components/QAPanel";
 import { ReconciliationStatement } from "./components/ReconciliationStatement";
 import { RootCauseClusters } from "./components/RootCauseClusters";
+import { MatcherAutoResolved } from "./components/MatcherAutoResolved";
 import { FilterBar } from "./components/FilterBar";
 import { CaseTable } from "./components/CaseTable";
 import { Pager } from "./components/Pager";
@@ -89,6 +90,7 @@ export default function App() {
           <QAPanel />
           <ReconciliationStatement />
           <RootCauseClusters />
+          <MatcherAutoResolved />
         </div>
 
         <FilterBar

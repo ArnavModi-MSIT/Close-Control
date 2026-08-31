@@ -83,6 +83,18 @@ export function useRunSummary(enabled: boolean) {
   });
 }
 
+export function useMatcherAutoResolved(enabled: boolean, exceptionType?: string) {
+  return useQuery({
+    queryKey: ["matcher-auto-resolved", exceptionType ?? "all"],
+    queryFn: () => api.getMatcherAutoResolved(exceptionType),
+    enabled,
+    // Same reasoning as useRootCauseClusters below -- a panel opened
+    // deliberately, matched loosely to the endpoint's own 8s server-side
+    // cache TTL.
+    staleTime: 8_000,
+  });
+}
+
 export function useRootCauseClusters(enabled: boolean) {
   return useQuery({
     queryKey: ["root-cause-clusters"],

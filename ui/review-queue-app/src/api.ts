@@ -4,6 +4,7 @@ import type {
   CaseDetail,
   CaseFilters,
   CaseListResponse,
+  MatcherAutoResolvedResponse,
   QAResult,
   ReconciliationStatement,
   ReviewSubmission,
@@ -88,6 +89,11 @@ export function getRunSummary(): Promise<{ generated: boolean; summary: string |
 
 export function getRootCauseClusters(): Promise<RootCauseClustersResponse> {
   return fetchJson(`${API}/root-cause-clusters`);
+}
+
+export function getMatcherAutoResolved(exceptionType?: string): Promise<MatcherAutoResolvedResponse> {
+  const qs = exceptionType ? `?exception_type=${encodeURIComponent(exceptionType)}` : "";
+  return fetchJson(`${API}/matcher-auto-resolved${qs}`);
 }
 
 export function bulkReview(payload: BulkReviewRequest): Promise<BulkReviewResult> {
