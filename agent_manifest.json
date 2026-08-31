@@ -1,0 +1,67 @@
+{
+  "agent_name": "AI Finance Controller -- Exception Resolution Agent",
+  "category": "automated multi-source settlement reconciliation",
+  "summary": "Matches payment gateway, bank statement, internal settlement ledger, and Razorpay Capital loan-recovery records deterministically; for the residual it cannot resolve by rule, proposes a classification and root cause grounded only in evidence it was actually shown; a separate, unmodified deterministic gate decides whether that proposal is trustworthy enough to auto-resolve or must go to a human. This file is generated to be read, not written to justify a decision after the fact -- every claim below is a real, currently-true property of the code cited next to it, not a policy aspiration.",
+
+  "data_access": {
+    "reads": [
+      "Payment gateway records (data/gateway.json)",
+      "Bank statement, post-ingestion, both banking partners (data/bank_statement.csv)",
+      "Internal settlement ledger (data/internal_settlement_ledger.csv)",
+      "Razorpay Capital loan-recovery schedule, the 4th source (data/loan_recovery_schedule.csv)",
+      "Its own prior review history, for correction memory only (data/correction_log.jsonl) and prior investigation results (data/investigation_log.jsonl)",
+      "The deterministic matcher's own report row for the specific case it is asked about -- never the raw source files directly, and never another case's row"
+    ],
+    "writes": [
+      "Its own append-only proposal log (data/audit_log.jsonl for the single-shot agent, data/investigation_log.jsonl for the tool-using investigator) -- never edited or deleted after being written, only appended to",
+      "review_backend's Postgres `cases` table, once per case, at first seed only -- a case's original AI proposal is never overwritten by a later run (see 'known invariants' below)"
+    ],
+    "never_reads_or_writes": [
+      "data/ground_truth.csv -- read by exactly one file in this entire codebase (evaluate.py, for scoring only), enforced by a static-scan test (tests/test_ground_truth_isolation.py) that fails the build if any agent-facing module imports it",
+      "Any real bank, gateway, or accounting system -- every data source above is either a synthetic file or, for the live-Razorpay-integration path, a read-only test-mode API call; nothing in this codebase posts a real financial transaction anywhere",
+      "No web scraping, no external inference, no unverified sources -- every evidence value shown to the model is a real, precomputed field from matching/report.py, never invented or fetched live"
+    ]
+  },
+
+  "actions": {
+    "can_do": [
+      "Propose an exception_type, root_cause, policy_id citation, confidence, and recommended_action for one case the deterministic matcher escalated (agent/client.py's single-shot path or investigator/loop.py's multi-round tool-using path)",
+      "Reclassify what it believes the exception type is -- recorded and shown to a human, but never authoritative (see 'will_never_do')",
+      "Call read-only deterministic tools to gather more evidence before answering (investigator/tools.py: search the bank statement, look up related transactions, compute a delta, check the loan-recovery schedule) -- every tool is plain Python over already-loaded data, no tool can itself decide or write anything",
+      "Auto-resolve a case only when ALL SEVEN of agent/gate.py's conditions hold simultaneously at once -- see 'validation' below",
+      "Draft a communication for a human to review before sending (investigator's drafted_communication field) -- never dispatches it itself; this codebase has no email/messaging integration at all",
+      "Answer a free-text question about the whole portfolio, grounded only in real tool-call results (qa_agent/), with every numeric claim checked against what those tools actually returned",
+      "Have a real, already-committed case's classification re-checked by a fresh, independent deterministic matcher run (Layer 7's closed-loop re-verification) -- this can only ever CLOSE a case the deterministic matcher now shows as genuinely clean, never open, re-decide, or re-classify one"
+    ],
+    "will_never_do": [
+      "Auto-resolve a case whose exception type is not on the explicit, human-curated AGENT_AUTO_RESOLVABLE_TYPES allowlist (agent/config.py) -- currently exactly one type, deemed_success_ambiguous, capped under Rs.5,000 at risk",
+      "Have its own reclassification of a case's exception type change which policy governs the decision or whether auto-resolution is even reachable -- the matcher's own exception_type stays authoritative for that lookup no matter what the model proposes (agent/gate.py's core rule, proven in tests/test_gate.py)",
+      "Auto-resolve on a fabricated or unrecognized evidence citation -- a citation that doesn't resolve to something the model was actually shown is a hard gate condition, not a soft flag (agent/evidence.py's validate_evidence_citations)",
+      "Post an entry to a real ledger, bank, or settlement system -- this agent only ever writes to its own review queue; a human's explicit review decision is the only thing that changes a case's disposition",
+      "Send drafted_communication anywhere -- no code path in this repository dispatches it; it is display-only, for a human to copy, edit, and send themselves",
+      "Overwrite a case's original frozen AI proposal once seeded, even when a later, richer investigation exists for the same case -- later results are additive enrichment only (seed_review_queue.py, verified via re-seed hash checks)",
+      "Take any action a human review decision, a re-verification closure, or an explicit config allowlist entry hasn't already authorized"
+    ]
+  },
+
+  "validation": {
+    "module": "agent/gate.py, imported by every path that can produce an auto-resolve decision (agent/client.py, investigator/loop.py via run_investigator.py/seed_review_queue.py) -- the gate itself has zero LLM calls in it",
+    "gate_rule": "auto_resolve = allowlisted AND policy_permits AND policy_id_citation_matches AND confidence >= 0.85 AND sufficient_evidence AND amount_at_risk < Rs.5,000 AND every evidence citation resolves to something real; any single failure forces escalate regardless of stated confidence",
+    "informational_checks_not_yet_gating": "check_root_cause_contradiction() and check_communication_leakage() (agent/evidence.py) flag decision-contradicting language or internal-jargon leakage in the model's own free text -- surfaced to a human, not yet promoted to a hard gate condition (the same cautious-then-promote path the evidence-citation check itself took before it became a hard condition)",
+    "audit_trail": "Two independent, complementary mechanisms: an append-only JSONL proposal log per case (data/audit_log.jsonl, data/investigation_log.jsonl), and a hash-chained review-decision ledger in Postgres (review_backend/chain.py) where altering, deleting, or reordering any past human decision breaks every hash after it, not just its own -- verified with a real tamper test, not just asserted",
+    "idempotency": "seed_review_queue.py hashes each case's audit entry plus matcher report row; re-running with unchanged inputs is a no-op, a genuine conflict is refused and left untouched, never silently overwritten",
+    "structural_pre-filter": "agent.gate.is_investigation_worthwhile() computes, with zero LLM involvement, whether a case could even structurally reach auto-resolve before any model is called at all -- currently true for 8 of 617 escalated cases (1.3%)"
+  },
+
+  "human_control": {
+    "review_surface": "review_backend/ (FastAPI) + ui/review-queue-app/ (React) -- approve, override, escalate, or revert any case; tier-2 cases (>=Rs.50,000) require a second, different manager's sign-off",
+    "revocable": "No persistent background process outside an explicit `python scripts/run_investigator.py` / server-run invocation; stopping the process or the Postgres container stops everything. AGENT_AUTO_RESOLVABLE_TYPES (agent/config.py) is a one-line config change that can shrink the allowlist to empty at any time"
+  },
+
+  "known_limitations": [
+    "Bank statement and internal ledger data are synthetic (data_generation/, seeded, reproducible) -- no live bank/accounting API connected in the default demo path",
+    "Greedy bank-row consumption in the matcher is order-dependent -- documented, tested (tests/test_ambiguity.py), and empirically verified safe on the real dataset (zero double-consumed rows, zero non-tolerance deltas), but not formally proven optimal for an arbitrary future dataset",
+    "Settlement splits are 1:2 only, narrower than internal '1:N' naming suggests -- consistent with what the data generator itself produces, not currently a live gap",
+    "The informational root-cause-contradiction and communication-leakage checks above have not yet been verified against a large enough live corpus to promote to hard gate conditions the way evidence-citation validation was"
+  ]
+}

@@ -161,6 +161,9 @@ RazorPay/
 ├── run_summary.py                          whole-run narrative summary, mock-first +
 │                                              optional Ollama, writes data/run_summary.txt,
 │                                              see agent/run_summary.py and §7
+├── agent_manifest.json                     machine-readable AI-governance declaration --
+│                                              exactly what the agent reads/writes/can-do/
+│                                              will-never-do, not a policy doc, see §7
 ├── run_baseline_naive.py                   naive-vs-full-system matching comparison
 ├── run_judge_demo.py                        5-minute guided walkthrough, zero live LLM calls
 ├── run_stream_simulator.py                   SIMULATED real-time stream (not a live Razorpay
@@ -1954,6 +1957,34 @@ deliberately informational, not-yet-a-hard-gate-condition posture as
 `check_root_cause_contradiction()` above — `drafted_communication` is
 supplementary context a human reviews before actually sending anything,
 never auto-dispatched by this codebase.
+
+**Machine-readable AI-governance declaration (`agent_manifest.json`, new,
+repo root)**. Idea sharpened by checking a peer Razorpay buildathon repo
+(`niy-ati/recon-engine`) past its README into its actual
+`agent_manifest.json` — a structured file stating exactly what its agent
+reads/writes, every action it can and can't take, and what a human can
+revoke, described in their own README as "a real file, not a policy doc."
+This project already had every one of those facts true and enforced in
+code (the allowlist, the seven gate conditions, the append-only audit
+log, the hash chain) — but scattered across this file's prose and several
+modules' own docstrings, with no single artifact a judge or auditor could
+open and read in isolation without already knowing where to look.
+
+Built our own, same shape, populated only with claims already verified
+elsewhere in this file — nothing new asserted, just consolidated and made
+machine-readable. `data_access.never_reads_or_writes` states the ground-
+truth-isolation rule explicitly (already enforced by
+`test_ground_truth_isolation.py`); `actions.will_never_do` states the
+authority-boundary rule from `agent/gate.py`'s own docstring (matcher's
+exception_type stays authoritative regardless of reclassification) and
+the frozen-original-proposal rule from `seed_review_queue.py`;
+`validation.informational_checks_not_yet_gating` names the two checks
+added just above by their real name and honestly states they haven't
+been promoted to hard gate conditions yet, mirroring the same "be precise
+about what's actually verified vs. written-but-untested" discipline the
+peer's own manifest used for its unverified provider paths. Purely a
+documentation/transparency artifact — no code path reads this file, so
+it carries zero runtime risk; verified only that it's well-formed JSON.
 
 **`policy_kb.py` grounded in real RBI/NPCI regulatory frameworks**, not
 invented text — added after checking each claim against actual circulars/
