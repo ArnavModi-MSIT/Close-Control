@@ -116,7 +116,7 @@ export function ToolsHub() {
           })}
         </nav>
 
-        <div className="min-w-0 rounded-2xl border border-border bg-surface shadow-sm">
+        <div className="min-w-0 max-h-[640px] overflow-y-auto rounded-2xl border border-border bg-surface shadow-sm">
           {ActivePanel ? (
             <ActivePanel />
           ) : (
