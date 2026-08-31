@@ -103,6 +103,62 @@ def check_root_cause_contradiction(root_cause: str, gate_decision: str) -> list[
     return [p for p in phrases if p in text]
 
 
+# Internal-jargon leakage guard for investigator/'s drafted_communication --
+# "a ready-to-send draft" (investigator/ollama_client.py's own prompt
+# wording) for contacting the bank or treasury ops, i.e. genuinely external-
+# facing text, unlike root_cause/evidence_used which stay inside this
+# system. Idea sharpened by checking a peer Razorpay buildathon repo
+# (kanikakataria75-ship-it/prahari-ai) past its README into its actual
+# backend/src/sentinel/llm/validators.py, which rejects a chargeback-
+# rebuttal draft containing internal-decision-state vocabulary ("win
+# probability", "confidence score", "policy gate") on the reasoning that a
+# document sent to an external financial-institution contact must never
+# expose the machinery that produced it -- a fluent draft that leaks
+# internal state looks unprofessional at best and confusing at worst to a
+# recipient who has no idea what "POLICY-009" or "risk_class" means.
+#
+# Checked against every real drafted_communication in data/investigation_log.jsonl
+# (211 non-null real drafts) before adopting this: NOT hypothetical -- 55 of
+# 211 already cite a raw POLICY-### id, and one draft (trn-000098) reads
+# "Escalate for refund per POLICY-009. No auto-resolution permitted." Word-
+# boundary regex used for short/ambiguous tokens like "gate" specifically
+# because a naive substring check (the peer's own approach) would false-
+# -positive on "investigate"/"gateway", both of which appear routinely in
+# real drafts -- verified zero real standalone "gate" matches exist, so
+# this guard doesn't need to loosen anything to stay clean, only avoid a
+# self-inflicted false-positive risk.
+import re as _re
+
+_LEAKAGE_SUBSTRING_PHRASES = (
+    "auto-resolution", "auto-resolve", "auto_resolve", "confidence score",
+    "risk_class", "risk class", "exception_type", "exception type",
+    "sufficient_evidence", "as an ai", "language model", "i cannot", "i'm unable",
+)
+_LEAKAGE_WORD_BOUNDARY_PATTERNS = (
+    _re.compile(r"\bgate\b", _re.IGNORECASE),
+    _re.compile(r"\bthreshold\b", _re.IGNORECASE),
+    _re.compile(r"\bPOLICY-\d+\b", _re.IGNORECASE),
+)
+
+
+def check_communication_leakage(drafted_communication: str) -> list[str]:
+    """Returns any internal-decision-machinery phrases found in a drafted,
+    externally-facing communication -- a bank/treasury contact has no
+    context for 'POLICY-009' or 'risk_class'. Empty list means clean, not
+    proof the prose is otherwise appropriate. Informational only, same as
+    check_root_cause_contradiction() -- nothing currently blocks a case on
+    this, it's a signal for a human reviewing the draft before sending it."""
+    if not drafted_communication:
+        return []
+    text = drafted_communication.lower()
+    flags = [p for p in _LEAKAGE_SUBSTRING_PHRASES if p in text]
+    for pat in _LEAKAGE_WORD_BOUNDARY_PATTERNS:
+        m = pat.search(drafted_communication)
+        if m:
+            flags.append(m.group(0).lower())
+    return flags
+
+
 def validate_evidence_citations(evidence_used: list[str], extra_valid_ids: frozenset = frozenset()) -> list[str]:
     """Returns whichever cited names in evidence_used do NOT correspond to a
     field actually shown in the evidence block -- i.e. the model citing

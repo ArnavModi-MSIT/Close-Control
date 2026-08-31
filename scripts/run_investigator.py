@@ -48,7 +48,7 @@ import pandas as pd
 from run_matcher import run
 from matching.loaders import load_sources, load_loan_book
 from agent.policy_kb import get_policy
-from agent.evidence import build_evidence, build_policy_block
+from agent.evidence import build_evidence, build_policy_block, check_communication_leakage
 from agent.gate import apply_gate, is_investigation_worthwhile
 from investigator import config
 from investigator.tools import ToolContext
@@ -83,6 +83,9 @@ def print_case_trace(row_dict: dict, result, gate_result: dict):
     print(f"Recommended: {result.recommended_action}")
     if result.drafted_communication:
         print(f"Drafted communication:\n  {result.drafted_communication}")
+        leaks = check_communication_leakage(result.drafted_communication)
+        if leaks:
+            print(f"  [WARN] internal-jargon leakage in externally-facing draft: {leaks}")
     print()
     print(f"GATE DECISION: {gate_result['final_decision']}  ({gate_result['agent_status']})")
     for reason in gate_result["gate_reasons"]:

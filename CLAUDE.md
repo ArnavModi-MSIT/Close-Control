@@ -1898,6 +1898,47 @@ citing text on both outcomes never false-flags), `test_agent_immutability.py`
 the `apply_gate()` level, since neither new field is persisted to the
 database or the case-detail API yet).
 
+**Internal-jargon leakage guard for `drafted_communication`
+(`agent/evidence.py`'s `check_communication_leakage()`)**, informational
+only, wired into `run_investigator.py`'s trace output as a `[WARN]` line.
+Idea sharpened by checking a peer Razorpay buildathon repo
+(`kanikakataria75-ship-it/prahari-ai`) past its README into its actual
+`backend/src/sentinel/llm/validators.py`, which rejects a chargeback-
+rebuttal draft that leaks internal decision-state vocabulary ("win
+probability", "confidence score", "policy gate") into a document meant for
+an external card-issuer contact. This project has the same shape of risk
+but hadn't checked for it: `investigator/ollama_client.py`'s own prompt
+describes `drafted_communication` as "a ready-to-send draft" for
+"contacting the bank or treasury ops" — genuinely external-facing text,
+unlike `root_cause`/`evidence_used`, which stay inside this system.
+
+**Not hypothetical, checked before building anything.** Swept all 211
+real non-null `drafted_communication` values in
+`data/investigation_log.jsonl` first: 55 already cite a raw `POLICY-###`
+id, and `trn-000098`'s real draft literally reads *"Escalate for refund
+per POLICY-009. No auto-resolution permitted."* — exactly the leakage
+class the peer's guard exists to catch, already present in this
+project's own generated data, not a theoretical risk. Running the
+shipped check against the same 211 real drafts: **61 (28.9%) flagged.**
+
+**A naive port of the peer's substring-only approach would have
+self-inflicted false positives, caught before shipping, not after.**
+Checked `"gate"` as a standalone word first: zero real drafts contain it,
+but a plain substring check would have hit 9 of 211 anyway — every one a
+false match inside `"investigate"`/`"gateway"`, both of which appear
+routinely in genuine drafts. Fixed with word-boundary regex
+(`\bgate\b`, `\bthreshold\b`, `\bPOLICY-\d+\b`) for short/ambiguous
+tokens, plain substring matching for unambiguous multi-word phrases
+(`"auto-resolution"`, `"confidence score"`, `"exception_type"`, the
+standard LLM assistant-voice tells). Verified: `test_gate.py` (13/13, two
+new tests — one proving the check catches the exact real leak found
+above, one proving `"investigate the gateway settlement"`-style text
+never false-flags), `test_review_api.py` (97/97, unaffected). Same
+deliberately informational, not-yet-a-hard-gate-condition posture as
+`check_root_cause_contradiction()` above — `drafted_communication` is
+supplementary context a human reviews before actually sending anything,
+never auto-dispatched by this codebase.
+
 **`policy_kb.py` grounded in real RBI/NPCI regulatory frameworks**, not
 invented text — added after checking each claim against actual circulars/
 SOPs, not a generic web summary. `POLICY-007` (`unexplained_shortage`) and

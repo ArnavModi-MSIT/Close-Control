@@ -23,6 +23,7 @@ if _SCRIPTS_DIR not in _sys.path:
 
 from agent.gate import apply_gate
 from agent.schema import ExceptionResolution
+from agent.evidence import check_communication_leakage
 from agent import config
 
 
@@ -206,6 +207,33 @@ def test_root_cause_consistent_on_normal_text():
     print("PASS -- ordinary root_cause text never false-flags on either outcome")
 
 
+def test_communication_leakage_catches_real_observed_leak():
+    """Idea sharpened by checking a peer Razorpay buildathon repo
+    (kanikakataria75-ship-it/prahari-ai) past its README into its actual
+    backend/src/sentinel/llm/validators.py, which rejects a chargeback-
+    rebuttal draft leaking internal decision-state vocabulary. This isn't
+    a hypothetical scenario for this project either -- this exact string
+    (trimmed) is a REAL drafted_communication already sitting in
+    data/investigation_log.jsonl for trn-000098, found by scanning all 211
+    real non-null drafts before building this check."""
+    leaks = check_communication_leakage(
+        "Urgent: Duplicate charge detected for transaction trn-000098 "
+        "(merchant merch_004). Escalate for refund per POLICY-009. No auto-resolution permitted.")
+    assert "policy-009" in leaks
+    assert "auto-resolution" in leaks
+    print("PASS -- real observed leak (POLICY-### citation + auto-resolution) caught")
+
+
+def test_communication_leakage_word_boundary_avoids_false_positive():
+    """'gate' must not fire on 'investigate'/'gateway' -- verified against
+    all 211 real drafts that this collision would otherwise have produced
+    9 false positives, all from those two words, zero genuine leaks."""
+    leaks = check_communication_leakage(
+        "Please investigate the gateway settlement discrepancy for this transaction.")
+    assert leaks == []
+    print("PASS -- 'investigate'/'gateway' text does not false-positive on the 'gate' guard")
+
+
 ALL_TESTS = [
     test_success_all_conditions_met,
     test_policy_missing,
@@ -218,6 +246,8 @@ ALL_TESTS = [
     test_missing_amount_fields_treated_as_zero_not_a_crash,
     test_root_cause_contradiction_flagged_informationally_not_gating,
     test_root_cause_consistent_on_normal_text,
+    test_communication_leakage_catches_real_observed_leak,
+    test_communication_leakage_word_boundary_avoids_false_positive,
 ]
 
 
