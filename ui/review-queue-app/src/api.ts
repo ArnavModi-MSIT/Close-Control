@@ -3,7 +3,9 @@ import type {
   BulkReviewResult,
   CaseDetail,
   CaseFilters,
+  AuditChainVerification,
   CaseListResponse,
+  CorrectionsResponse,
   MatcherAutoResolvedResponse,
   QAResult,
   ReconciliationStatement,
@@ -94,6 +96,14 @@ export function getRootCauseClusters(): Promise<RootCauseClustersResponse> {
 export function getMatcherAutoResolved(exceptionType?: string): Promise<MatcherAutoResolvedResponse> {
   const qs = exceptionType ? `?exception_type=${encodeURIComponent(exceptionType)}` : "";
   return fetchJson(`${API}/matcher-auto-resolved${qs}`);
+}
+
+export function getCorrections(): Promise<CorrectionsResponse> {
+  return fetchJson(`${API}/corrections`);
+}
+
+export function getAuditChainVerification(): Promise<AuditChainVerification> {
+  return fetchJson(`${API}/audit-chain/verify`);
 }
 
 export function bulkReview(payload: BulkReviewRequest): Promise<BulkReviewResult> {

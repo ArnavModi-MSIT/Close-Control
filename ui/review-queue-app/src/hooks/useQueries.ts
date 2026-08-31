@@ -95,6 +95,30 @@ export function useMatcherAutoResolved(enabled: boolean, exceptionType?: string)
   });
 }
 
+export function useCorrections(enabled: boolean) {
+  return useQuery({
+    queryKey: ["corrections"],
+    queryFn: api.getCorrections,
+    enabled,
+    // Not cached server-side (the endpoint reads a small file fresh every
+    // call), so a short client staleTime just avoids a redundant refetch
+    // on rapid re-opens of the same panel.
+    staleTime: 5_000,
+  });
+}
+
+export function useAuditChainVerification(enabled: boolean) {
+  return useQuery({
+    queryKey: ["audit-chain-verify"],
+    queryFn: api.getAuditChainVerification,
+    enabled,
+    // Deliberately NOT cached, matching the endpoint's own contract --
+    // re-deriving the answer on every open is the entire point of an
+    // integrity check. staleTime: 0 (the default) so React Query
+    // refetches on every mount/re-open rather than trusting a stale hit.
+  });
+}
+
 export function useRootCauseClusters(enabled: boolean) {
   return useQuery({
     queryKey: ["root-cause-clusters"],

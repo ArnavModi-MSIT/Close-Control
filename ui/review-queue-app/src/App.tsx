@@ -8,6 +8,8 @@ import { QAPanel } from "./components/QAPanel";
 import { ReconciliationStatement } from "./components/ReconciliationStatement";
 import { RootCauseClusters } from "./components/RootCauseClusters";
 import { MatcherAutoResolved } from "./components/MatcherAutoResolved";
+import { CorrectionMemory } from "./components/CorrectionMemory";
+import { AuditChainStatus } from "./components/AuditChainStatus";
 import { FilterBar } from "./components/FilterBar";
 import { CaseTable } from "./components/CaseTable";
 import { Pager } from "./components/Pager";
@@ -91,6 +93,8 @@ export default function App() {
           <ReconciliationStatement />
           <RootCauseClusters />
           <MatcherAutoResolved />
+          <CorrectionMemory />
+          <AuditChainStatus />
         </div>
 
         <FilterBar

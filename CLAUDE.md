@@ -2039,6 +2039,62 @@ amounts (e.g. `trn-loan000` → `loan_wQ9AmJDKYz`, ₹99.63 recovered,
 matching the transaction's own `net_delta_rupees` exactly). `test_review_api.py`
 (97/97) unaffected.
 
+**Two more real "backend has it, dashboard doesn't show it" gaps, found
+by systematically auditing every route in `main.py` against every fetch
+call in `ui/review-queue-app/src/api.ts`** — the same audit method that
+found the loan-book gap above, just applied exhaustively instead of
+ad hoc. Of 13 real routes, exactly 2 had zero frontend caller:
+
+1. **`GET /api/audit-chain/verify`** — real, tested (proven under
+   concurrent write load and a real tamper test — see the hash-chained
+   audit trail section below), and it had genuinely never been called by
+   anything in this UI. New `AuditChainStatus.tsx` panel, deliberately
+   never cached (matching the endpoint's own contract — an integrity
+   check that trusts a cached "yes" defeats the point of it re-deriving
+   the answer every time). Verified live: `{"total_rows": 40,
+   "pre_chain_rows": 0, "checked": 40, "intact": true, "broken_at": null}`
+   — a real "VERIFIED INTACT" badge, not a mock.
+
+2. **`corrections.py`'s correction memory** — real and tested
+   (`test_corrections.py`, 13 assertions) but write-only from this UI's
+   own point of view: `submit_review()` appends to
+   `data/correction_log.jsonl` on every human override, and `agent/client.py`
+   / `investigator/loop.py` genuinely read it back into future prompts,
+   but nothing ever showed a human that this exists. New `GET
+   /api/corrections` (reads `corrections.load_corrections()` directly,
+   deliberately uncached — a small, rarely-written local file, nothing
+   expensive to cache) and `CorrectionMemory.tsx`.
+
+   **Real data now backs it, not a staged example**: `data/correction_log.jsonl`
+   didn't exist before this — checked directly, confirmed empty. Rather
+   than build a UI for a feature with nothing to show, submitted one real
+   override through the actual, unmodified review API
+   (`trn-000001`, `agent_recommended_action`, tier 1, chosen specifically
+   because it does NOT touch either of the two cases already central to
+   the recorded demo script). The correction is genuinely well-justified,
+   not arbitrary: `trn-000001`'s own root-cause text already named 34
+   other transactions from the same merchant sharing the identical
+   missing-bank-reference pattern, so the override corrects the AI's
+   per-settlement recommendation ("escalate to treasury for this one
+   settlement") to the systemically correct one ("escalate to the
+   merchant's relationship manager — this is an account-level issue").
+   Verified end to end, not just that the write succeeded:
+   `corrections.correction_block_for('missing_bank_reference', 'data')`
+   produces the real, correctly-formatted prompt block from this exact
+   entry — proving the mechanism actually threads through, not just that
+   a log line got appended. This is also why the Audit Trail Integrity
+   panel above reports 40 rows, not 39 — this override is real review
+   history now, and it verified intact along with everything else.
+
+3. **A related, smaller gap in the same audit**: `provenance.audit_record_hash`
+   (each case's own SHA-256 tamper-evidence, distinct from the review
+   -sequence hash chain above) has existed in the case-detail response
+   and this frontend's own `types.ts` since Layer 5 was built, with zero
+   component ever rendering it. Added a `Provenance` section to
+   `DetailPanel.tsx` (seeded-at, source file, truncated hash with a
+   tooltip explaining what it proves, schema version) — verified live
+   against `trn-000001` post-override.
+
 **Bulk cluster review (`POST /api/cases/bulk-review`, `GET
 /api/root-cause-clusters`)** — the review-side counterpart to
 `matching/root_cause.py`'s clustering: a reviewer who trusts a cluster's

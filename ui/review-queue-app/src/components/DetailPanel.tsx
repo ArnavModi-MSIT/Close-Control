@@ -187,6 +187,32 @@ export function DetailPanel({ transactionId }: { transactionId: string | null })
         <ActivityTimeline activity={d.activity} />
       </DetailSection>
 
+      {/* d.provenance has existed in the API response and this file's own
+          types.ts since the case-detail endpoint was built, but nothing
+          ever rendered it -- audit_record_hash proves THIS case's seeded
+          content hasn't been silently altered (a different, narrower
+          guarantee than the Audit Trail Integrity panel above the case
+          table, which proves the SEQUENCE of human review events hasn't
+          been tampered with). Found via a systematic audit of every
+          backend field with zero frontend caller, the same pattern that
+          found the Matcher-Auto-Resolved and Correction Memory gaps. */}
+      <DetailSection title="Provenance">
+        <KvRow k="Seeded" v={d.provenance.seeded_at} />
+        <KvRow k="Source" v={<span className="font-mono text-[0.8rem]">{d.provenance.audit_log_source}</span>} />
+        <KvRow
+          k="Audit hash"
+          v={
+            <span
+              className="cursor-help font-mono text-[0.78rem]"
+              title="SHA-256 over this case's audit entry + matcher report row, computed once at seed time -- proves this case's frozen AI proposal and evidence haven't been silently altered since. Recomputed and compared by seed_review_queue.py on every re-seed; a mismatch is refused, never silently overwritten."
+            >
+              {d.provenance.audit_record_hash.slice(0, 16)}&hellip;
+            </span>
+          }
+        />
+        <KvRow k="Schema" v={d.provenance.schema_version} />
+      </DetailSection>
+
       <ReviewForm detail={d} onDone={() => {}} />
     </div>
   );

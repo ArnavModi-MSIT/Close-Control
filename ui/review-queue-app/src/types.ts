@@ -391,6 +391,41 @@ export interface MatcherAutoResolvedResponse {
   items: MatcherAutoResolvedItem[];
 }
 
+// Mirrors GET /api/corrections exactly -- corrections.py's correction
+// memory (past human overrides fed back into future AI prompts), exposed
+// for the first time. Full history per exception_type, in file order --
+// not just the single most-recent entry the prompt-building path itself
+// uses.
+export interface Correction {
+  transaction_id: string;
+  matcher_exception_type: string;
+  override_field: string;
+  override_old_value: string;
+  override_new_value: string;
+  reason: string;
+  reviewer_name: string;
+  created_at: string;
+}
+
+export interface CorrectionsResponse {
+  total_corrections: number;
+  by_exception_type: Record<string, Correction[]>;
+}
+
+// Mirrors GET /api/audit-chain/verify exactly -- re-derives every review
+// row's chain_hash from scratch and compares against what's stored, so a
+// silently altered, deleted, or reordered historical row is caught, not
+// just a single row's own hash. Deliberately never cached (see the
+// endpoint's own docstring) -- caching an integrity check would defeat
+// the point of it re-deriving the answer every time.
+export interface AuditChainVerification {
+  total_rows: number;
+  pre_chain_rows: number;
+  checked: number;
+  intact: boolean;
+  broken_at: number | null;
+}
+
 // What GET /api/cases/bulk-review accepts -- deliberately a NARROWER
 // decision set than a single-case review (see review_backend/models.py's
 // BulkReviewRequest docstring for why "overridden"/"reverted" are excluded).

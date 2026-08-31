@@ -49,7 +49,7 @@ from journal_entries import build_journal_entry
 from cash_position.engine import build_cash_position
 from cash_position.config import DEFAULT_AS_OF
 from cash_position.reconciliation_statement import build_reconciliation_statement
-from corrections import append_correction
+from corrections import append_correction, load_corrections
 
 UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui")
 
@@ -757,6 +757,32 @@ def matcher_auto_resolved(exception_type: str | None = None):
         filtered = [it for it in result["items"] if it["final_exception_type"] == exception_type]
         return {**result, "items": filtered}
     return result
+
+
+@app.get("/api/corrections")
+def corrections():
+    """corrections.py's correction memory, exposed for the first time --
+    it was write-only from review_backend's own perspective until now:
+    submit_review() appends to data/correction_log.jsonl on every human
+    override, and agent/client.py / investigator/loop.py read it back into
+    FUTURE prompts, but nothing ever surfaced the file's contents to a
+    human. A reviewer had no way to see that this mechanism exists, let
+    alone what's actually on file, short of reading the raw JSONL.
+
+    Deliberately NOT cached (unlike the matcher-derived endpoints above)
+    -- this reads a small, rarely-written local file directly, not
+    something computed from a fresh full matcher run, so there's nothing
+    expensive here to cache. Read fresh every call, so a correction
+    submitted seconds ago shows up immediately.
+
+    Returns the FULL history per exception_type, in file (append) order
+    -- not just the single most recent entry correction_block_for()
+    actually feeds into a prompt. A human reviewing the audit trail wants
+    to see everything that's been corrected over time; only the prompt
+    -building path needs the "most recent wins" truncation."""
+    by_type = load_corrections(CASH_POSITION_DATA_DIR)
+    total = sum(len(v) for v in by_type.values())
+    return {"total_corrections": total, "by_exception_type": by_type}
 
 
 @app.post("/api/reverify")
