@@ -14,6 +14,9 @@ import type { MatcherAutoResolvedItem } from "../types";
 // to make that population visible; it's read-only, nothing here is
 // reviewable or actionable, matching what these transactions actually
 // are -- already, correctly, closed.
+//
+// Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
+// which one of the six tool panels is shown.
 
 const TYPE_TABS = ["all", "loan_recovery_deduction", "timing_lag_beyond_t2", "fee_variance"] as const;
 
@@ -60,79 +63,64 @@ function ItemRow({ item }: { item: MatcherAutoResolvedItem }) {
 }
 
 export function MatcherAutoResolved() {
-  const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<(typeof TYPE_TABS)[number]>("all");
   const { data, isLoading, isError, refetch } = useMatcherAutoResolved(
-    open, tab === "all" ? undefined : tab,
+    true, tab === "all" ? undefined : tab,
   );
 
   return (
-    <div className="rounded-2xl border border-border border-l-4 border-l-accent bg-surface shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
-        aria-expanded={open}
-      >
-        <div>
-          <h2 className="text-[1.05rem] font-bold text-ink">Matcher-Auto-Resolved</h2>
-          <p className="mt-0.5 text-[0.82rem] text-ink-soft">
-            The transactions the deterministic matcher closed on its own, before any LLM was
-            ever involved &mdash; including every real Razorpay Capital loan recovery.
-          </p>
+    <div className="px-6 py-5">
+      <div className="mb-4">
+        <h2 className="text-[1.05rem] font-bold text-ink">Matcher-Auto-Resolved</h2>
+        <p className="mt-0.5 text-[0.82rem] text-ink-soft">
+          The transactions the deterministic matcher closed on its own, before any LLM was
+          ever involved &mdash; including every real Razorpay Capital loan recovery.
+        </p>
+      </div>
+
+      {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Loading&hellip;</p>}
+
+      {isError && (
+        <div className="py-4">
+          <p className="mb-3 text-[0.88rem] text-crit">Couldn't load matcher-resolved transactions.</p>
+          <button type="button" onClick={() => refetch()}
+                  className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
+            Retry
+          </button>
         </div>
-        <span className={`flex-shrink-0 rounded-full border border-border-2 px-3 py-1.5 font-mono text-[0.76rem] text-ink-soft transition-transform ${open ? "rotate-180" : ""}`}>
-          &#9660;
-        </span>
-      </button>
+      )}
 
-      {open && (
-        <div className="border-t border-border px-6 py-5">
-          {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Loading&hellip;</p>}
+      {data && (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Total, zero LLM" value={String(data.total_matcher_auto_resolved)} accent />
+            <Stat label="Loan recoveries" value={String(data.by_exception_type.loan_recovery_deduction ?? 0)} />
+            <Stat label="Timing lag" value={String(data.by_exception_type.timing_lag_beyond_t2 ?? 0)} />
+            <Stat label="Fee variance" value={String(data.by_exception_type.fee_variance ?? 0)} />
+          </div>
 
-          {isError && (
-            <div className="py-4">
-              <p className="mb-3 text-[0.88rem] text-crit">Couldn't load matcher-resolved transactions.</p>
-              <button type="button" onClick={() => refetch()}
-                      className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
-                Retry
+          <div className="mb-3 flex flex-wrap gap-2">
+            {TYPE_TABS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={`rounded-full border-[1.5px] px-3 py-1 text-[0.76rem] font-semibold ${
+                  tab === t ? "border-accent bg-accent-soft text-accent" : "border-border-2 bg-surface text-ink-soft"
+                }`}
+              >
+                {t === "all" ? "All" : humanizeType(t)}
               </button>
-            </div>
-          )}
+            ))}
+          </div>
 
-          {data && (
-            <>
-              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Stat label="Total, zero LLM" value={String(data.total_matcher_auto_resolved)} accent />
-                <Stat label="Loan recoveries" value={String(data.by_exception_type.loan_recovery_deduction ?? 0)} />
-                <Stat label="Timing lag" value={String(data.by_exception_type.timing_lag_beyond_t2 ?? 0)} />
-                <Stat label="Fee variance" value={String(data.by_exception_type.fee_variance ?? 0)} />
-              </div>
-
-              <div className="mb-3 flex flex-wrap gap-2">
-                {TYPE_TABS.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    className={`rounded-full border-[1.5px] px-3 py-1 text-[0.76rem] font-semibold ${
-                      tab === t ? "border-accent bg-accent-soft text-accent" : "border-border-2 bg-surface text-ink-soft"
-                    }`}
-                  >
-                    {t === "all" ? "All" : humanizeType(t)}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex flex-col divide-y divide-border">
-                {data.items.map((item) => <ItemRow key={item.transaction_id} item={item} />)}
-                {data.items.length === 0 && (
-                  <p className="py-4 text-center text-[0.85rem] text-ink-mute">No transactions in this category.</p>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+          <div className="flex flex-col divide-y divide-border">
+            {data.items.map((item) => <ItemRow key={item.transaction_id} item={item} />)}
+            {data.items.length === 0 && (
+              <p className="py-4 text-center text-[0.85rem] text-ink-mute">No transactions in this category.</p>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

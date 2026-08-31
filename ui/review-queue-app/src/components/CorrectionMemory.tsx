@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useCorrections } from "../hooks/useQueries";
 import { humanizeType } from "../lib/format";
 import type { Correction } from "../types";
@@ -10,6 +9,9 @@ import type { Correction } from "../types";
 // nothing ever showed a reviewer that this mechanism exists, let alone
 // what's actually on file. Read-only, same as MatcherAutoResolved --
 // nothing here is reviewable, it's evidence the mechanism is real.
+//
+// Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
+// which one of the six tool panels is shown.
 
 function CorrectionRow({ c }: { c: Correction }) {
   return (
@@ -32,64 +34,49 @@ function CorrectionRow({ c }: { c: Correction }) {
 }
 
 export function CorrectionMemory() {
-  const [open, setOpen] = useState(false);
-  const { data, isLoading, isError, refetch } = useCorrections(open);
+  const { data, isLoading, isError, refetch } = useCorrections(true);
 
   return (
-    <div className="rounded-2xl border border-border border-l-4 border-l-good bg-surface shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
-        aria-expanded={open}
-      >
-        <div>
-          <h2 className="text-[1.05rem] font-bold text-ink">Correction Memory</h2>
-          <p className="mt-0.5 text-[0.82rem] text-ink-soft">
-            Past human overrides, fed back into future AI proposals of the same exception type —
-            the AI never repeats a correction a reviewer already made once.
-          </p>
+    <div className="px-6 py-5">
+      <div className="mb-4">
+        <h2 className="text-[1.05rem] font-bold text-ink">Correction Memory</h2>
+        <p className="mt-0.5 text-[0.82rem] text-ink-soft">
+          Past human overrides, fed back into future AI proposals of the same exception type —
+          the AI never repeats a correction a reviewer already made once.
+        </p>
+      </div>
+
+      {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Loading&hellip;</p>}
+
+      {isError && (
+        <div className="py-4">
+          <p className="mb-3 text-[0.88rem] text-crit">Couldn't load correction memory.</p>
+          <button type="button" onClick={() => refetch()}
+                  className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
+            Retry
+          </button>
         </div>
-        <span className={`flex-shrink-0 rounded-full border border-border-2 px-3 py-1.5 font-mono text-[0.76rem] text-ink-soft transition-transform ${open ? "rotate-180" : ""}`}>
-          &#9660;
-        </span>
-      </button>
+      )}
 
-      {open && (
-        <div className="border-t border-border px-6 py-5">
-          {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Loading&hellip;</p>}
+      {data && data.total_corrections === 0 && (
+        <p className="py-4 text-center text-[0.85rem] text-ink-mute">
+          No corrections on file yet — this fills in the first time a reviewer overrides an
+          AI proposal.
+        </p>
+      )}
 
-          {isError && (
-            <div className="py-4">
-              <p className="mb-3 text-[0.88rem] text-crit">Couldn't load correction memory.</p>
-              <button type="button" onClick={() => refetch()}
-                      className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
-                Retry
-              </button>
+      {data && data.total_corrections > 0 && (
+        <div className="flex flex-col divide-y divide-border">
+          {Object.entries(data.by_exception_type).map(([type, items]) => (
+            <div key={type} className="py-3 first:pt-0">
+              <div className="mb-1 text-[0.7rem] font-bold tracking-wide text-ink-mute uppercase">
+                {humanizeType(type)}
+              </div>
+              <div className="flex flex-col divide-y divide-border">
+                {items.map((c, i) => <CorrectionRow key={`${c.transaction_id}-${i}`} c={c} />)}
+              </div>
             </div>
-          )}
-
-          {data && data.total_corrections === 0 && (
-            <p className="py-4 text-center text-[0.85rem] text-ink-mute">
-              No corrections on file yet — this fills in the first time a reviewer overrides an
-              AI proposal.
-            </p>
-          )}
-
-          {data && data.total_corrections > 0 && (
-            <div className="flex flex-col divide-y divide-border">
-              {Object.entries(data.by_exception_type).map(([type, items]) => (
-                <div key={type} className="py-3 first:pt-0">
-                  <div className="mb-1 text-[0.7rem] font-bold tracking-wide text-ink-mute uppercase">
-                    {humanizeType(type)}
-                  </div>
-                  <div className="flex flex-col divide-y divide-border">
-                    {items.map((c, i) => <CorrectionRow key={`${c.transaction_id}-${i}`} c={c} />)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
       )}
     </div>

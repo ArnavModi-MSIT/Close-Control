@@ -4,12 +4,7 @@ import { KpiCards } from "./components/KpiCards";
 import { StatusDonut } from "./components/charts/StatusDonut";
 import { ExceptionTypeBar } from "./components/charts/ExceptionTypeBar";
 import { InvestigationDonut } from "./components/charts/InvestigationDonut";
-import { QAPanel } from "./components/QAPanel";
-import { ReconciliationStatement } from "./components/ReconciliationStatement";
-import { RootCauseClusters } from "./components/RootCauseClusters";
-import { MatcherAutoResolved } from "./components/MatcherAutoResolved";
-import { CorrectionMemory } from "./components/CorrectionMemory";
-import { AuditChainStatus } from "./components/AuditChainStatus";
+import { ToolsHub } from "./components/ToolsHub";
 import { FilterBar } from "./components/FilterBar";
 import { CaseTable } from "./components/CaseTable";
 import { Pager } from "./components/Pager";
@@ -88,14 +83,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="mb-6 flex flex-col gap-4">
-          <QAPanel />
-          <ReconciliationStatement />
-          <RootCauseClusters />
-          <MatcherAutoResolved />
-          <CorrectionMemory />
-          <AuditChainStatus />
-        </div>
+        <ToolsHub />
 
         <FilterBar
           filters={filters}

@@ -228,78 +228,65 @@ function BulkReviewDialog({ cluster, onClose }: { cluster: RootCauseCluster; onC
   );
 }
 
+// Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
+// which one of the six tool panels is shown.
 export function RootCauseClusters() {
-  const [open, setOpen] = useState(false);
-  const { data, isLoading, isError, refetch } = useRootCauseClusters(open);
-  const { data: runSummary } = useRunSummary(open);
+  const { data, isLoading, isError, refetch } = useRootCauseClusters(true);
+  const { data: runSummary } = useRunSummary(true);
   const [reviewing, setReviewing] = useState<RootCauseCluster | null>(null);
 
   return (
-    <div className="rounded-2xl border border-border border-l-4 border-l-warn bg-surface shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
-        aria-expanded={open}
-      >
-        <div>
-          <h2 className="text-[1.05rem] font-bold text-ink">Root-Cause Clusters</h2>
-          <p className="mt-0.5 text-[0.82rem] text-ink-soft">
-            The escalated queue collapsed into its underlying causes &mdash; one settlement's missing
-            reference can flag dozens of cases at once.
-          </p>
+    <div className="px-6 py-5">
+      <div className="mb-4">
+        <h2 className="text-[1.05rem] font-bold text-ink">Root-Cause Clusters</h2>
+        <p className="mt-0.5 text-[0.82rem] text-ink-soft">
+          The escalated queue collapsed into its underlying causes &mdash; one settlement's missing
+          reference can flag dozens of cases at once.
+        </p>
+      </div>
+
+      {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Clustering&hellip;</p>}
+
+      {isError && (
+        <div className="py-4">
+          <p className="mb-3 text-[0.88rem] text-crit">Couldn't load root-cause clusters.</p>
+          <button type="button" onClick={() => refetch()}
+                  className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
+            Retry
+          </button>
         </div>
-        <span className={`flex-shrink-0 rounded-full border border-border-2 px-3 py-1.5 font-mono text-[0.76rem] text-ink-soft transition-transform ${open ? "rotate-180" : ""}`}>
-          &#9660;
-        </span>
-      </button>
+      )}
 
-      {open && (
-        <div className="border-t border-border px-6 py-5">
-          {isLoading && <p className="py-6 text-center text-[0.9rem] text-ink-mute">Clustering&hellip;</p>}
-
-          {isError && (
-            <div className="py-4">
-              <p className="mb-3 text-[0.88rem] text-crit">Couldn't load root-cause clusters.</p>
-              <button type="button" onClick={() => refetch()}
-                      className="rounded-lg border-[1.5px] border-crit bg-surface px-3.5 py-1.5 text-[0.82rem] font-semibold text-crit">
-                Retry
-              </button>
+      {data && (
+        <>
+          {runSummary?.generated && runSummary.summary && (
+            <div className="mb-4 rounded-xl border border-border bg-ground-2 px-4 py-3">
+              <div className="mb-1 flex items-center gap-2 text-[0.7rem] tracking-wide text-ink-soft uppercase">
+                Run summary
+                {isMockText(runSummary.summary) && (
+                  <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[0.62rem] font-semibold text-ink-mute normal-case"
+                        title="A deterministic template narrated this from the real numbers above -- not a live LLM call. See run_summary.py --provider ollama for a real narrated version.">
+                    mock
+                  </span>
+                )}
+              </div>
+              <p className="text-[0.85rem] text-ink-soft">{stripMockBracket(runSummary.summary)}</p>
             </div>
           )}
+          <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Escalated cases" value={String(data.summary.escalated_cases)} />
+            <Stat label="Root causes" value={String(data.summary.root_cause_clusters)} accent />
+            <Stat label="Amplification" value={`${data.summary.amplification_factor}x`} />
+            <Stat label="Covered by fan-out"
+                  value={`${data.summary.pct_cases_in_multi_case_clusters}%`} />
+          </div>
 
-          {data && (
-            <>
-              {runSummary?.generated && runSummary.summary && (
-                <div className="mb-4 rounded-xl border border-border bg-ground-2 px-4 py-3">
-                  <div className="mb-1 flex items-center gap-2 text-[0.7rem] tracking-wide text-ink-soft uppercase">
-                    Run summary
-                    {isMockText(runSummary.summary) && (
-                      <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[0.62rem] font-semibold text-ink-mute normal-case"
-                            title="A deterministic template narrated this from the real numbers above -- not a live LLM call. See run_summary.py --provider ollama for a real narrated version.">
-                        mock
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[0.85rem] text-ink-soft">{stripMockBracket(runSummary.summary)}</p>
-                </div>
-              )}
-              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <Stat label="Escalated cases" value={String(data.summary.escalated_cases)} />
-                <Stat label="Root causes" value={String(data.summary.root_cause_clusters)} accent />
-                <Stat label="Amplification" value={`${data.summary.amplification_factor}x`} />
-                <Stat label="Covered by fan-out"
-                      value={`${data.summary.pct_cases_in_multi_case_clusters}%`} />
-              </div>
-
-              <div className="flex flex-col divide-y divide-border">
-                {groupByType(data.clusters).map(([type, group]) => (
-                  <ClusterTypeGroup key={type} type={type} clusters={group} onReview={setReviewing} />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+          <div className="flex flex-col divide-y divide-border">
+            {groupByType(data.clusters).map(([type, group]) => (
+              <ClusterTypeGroup key={type} type={type} clusters={group} onReview={setReviewing} />
+            ))}
+          </div>
+        </>
       )}
 
       {reviewing && <BulkReviewDialog cluster={reviewing} onClose={() => setReviewing(null)} />}

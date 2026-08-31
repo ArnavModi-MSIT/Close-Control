@@ -85,8 +85,10 @@ function AnswerCard({ result }: { result: QAResult }) {
   );
 }
 
+// Header/collapse chrome removed -- this component now only ever renders
+// as the selected tab's content inside ToolsHub, which owns the
+// show/hide toggle via which panel it mounts. See ToolsHub.tsx.
 export function QAPanel() {
-  const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState("");
   const { mutate, data, isPending, isError, error, reset } = useAskQA();
 
@@ -97,79 +99,68 @@ export function QAPanel() {
   };
 
   return (
-    <div className="rounded-2xl border border-border border-l-4 border-l-accent bg-surface shadow-sm">
-      <button type="button" onClick={() => setOpen((v) => !v)}
-              className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left"
-              aria-expanded={open}>
-        <div>
-          <h2 className="text-[1.05rem] font-bold text-ink">Settlement Q&amp;A</h2>
-          <p className="mt-0.5 text-[0.82rem] text-ink-soft">
-            Ask a question about the reconciliation data — grounded in real tool calls, not guessed.
-          </p>
-        </div>
-        <span className={`flex-shrink-0 rounded-full border border-border-2 px-3 py-1.5 font-mono text-[0.76rem] text-ink-soft transition-transform ${open ? "rotate-180" : ""}`}>
-          &#9660;
-        </span>
-      </button>
+    <div className="px-6 py-5">
+      <div className="mb-4">
+        <h2 className="text-[1.05rem] font-bold text-ink">Settlement Q&amp;A</h2>
+        <p className="mt-0.5 text-[0.82rem] text-ink-soft">
+          Ask a question about the reconciliation data — grounded in real tool calls, not guessed.
+        </p>
+      </div>
 
-      {open && (
-        <div className="border-t border-border px-6 py-5">
-          <form
-            onSubmit={(e) => { e.preventDefault(); ask(question); }}
-            className="flex flex-wrap gap-2"
+      <form
+        onSubmit={(e) => { e.preventDefault(); ask(question); }}
+        className="flex flex-wrap gap-2"
+      >
+        <input
+          type="text"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="e.g. What's driving the review queue backlog?"
+          className="min-w-0 flex-1 rounded-lg border border-border-2 bg-surface px-3 py-2 text-[0.88rem] text-ink"
+        />
+        <button
+          type="submit"
+          disabled={isPending || !question.trim()}
+          className="rounded-lg bg-accent px-4 py-2 text-[0.86rem] font-semibold text-white disabled:opacity-50"
+        >
+          {isPending ? "Thinking…" : "Ask"}
+        </button>
+      </form>
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {EXAMPLE_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => ask(q)}
+            disabled={isPending}
+            className="rounded-full border border-border-2 bg-surface-2 px-2.5 py-1 text-[0.72rem] text-ink-soft disabled:opacity-50"
           >
-            <input
-              type="text"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="e.g. What's driving the review queue backlog?"
-              className="min-w-0 flex-1 rounded-lg border border-border-2 bg-surface px-3 py-2 text-[0.88rem] text-ink"
-            />
-            <button
-              type="submit"
-              disabled={isPending || !question.trim()}
-              className="rounded-lg bg-accent px-4 py-2 text-[0.86rem] font-semibold text-white disabled:opacity-50"
-            >
-              {isPending ? "Thinking…" : "Ask"}
-            </button>
-          </form>
+            {q}
+          </button>
+        ))}
+      </div>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {EXAMPLE_QUESTIONS.map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => ask(q)}
-                disabled={isPending}
-                className="rounded-full border border-border-2 bg-surface-2 px-2.5 py-1 text-[0.72rem] text-ink-soft disabled:opacity-50"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
+      {isPending && (
+        <p className="mt-3 text-[0.84rem] text-ink-mute">
+          Calling real tools and reasoning over the result — this runs on local Ollama and
+          typically takes 30–120 seconds, not a few seconds. Hang tight.
+        </p>
+      )}
 
-          {isPending && (
-            <p className="mt-3 text-[0.84rem] text-ink-mute">
-              Calling real tools and reasoning over the result — this runs on local Ollama and
-              typically takes 30–120 seconds, not a few seconds. Hang tight.
-            </p>
-          )}
-
-          {isError && (
-            <div className="mt-3 rounded-xl border-[1.5px] border-crit bg-surface px-3.5 py-2.5">
-              <p className="text-[0.86rem] text-crit">
-                {error instanceof Error ? error.message : "The Q&A agent is unavailable."}
-              </p>
-              <button type="button" onClick={() => reset()}
-                      className="mt-1.5 text-[0.8rem] font-semibold text-accent">
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {data && <AnswerCard result={data} />}
+      {isError && (
+        <div className="mt-3 rounded-xl border-[1.5px] border-crit bg-surface px-3.5 py-2.5">
+          <p className="text-[0.86rem] text-crit">
+            {error instanceof Error ? error.message : "The Q&A agent is unavailable."}
+          </p>
+          <button type="button" onClick={() => reset()}
+                  className="mt-1.5 text-[0.8rem] font-semibold text-accent">
+            Dismiss
+          </button>
         </div>
       )}
+
+      {data && <AnswerCard result={data} />}
     </div>
   );
 }
