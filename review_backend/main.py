@@ -331,7 +331,7 @@ def list_cases(exception_type: str | None = None, status: str | None = None,
     if sort_direction not in ("asc", "desc"):
         raise HTTPException(400, "sort_direction must be 'asc' or 'desc'")
 
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         clauses, params = [], []
         if exception_type:
@@ -405,7 +405,7 @@ def list_cases(exception_type: str | None = None, status: str | None = None,
 
 @app.get("/api/cases/{transaction_id}")
 def get_case(transaction_id: str):
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         row = _get_case_row(conn, transaction_id)
         cd = _row_to_case_dict(row)
@@ -499,7 +499,7 @@ def get_case(transaction_id: str):
 
 @app.post("/api/cases/{transaction_id}/review")
 def submit_review(transaction_id: str, submission: ReviewSubmission):
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         case_row = _get_case_row(conn, transaction_id)
         reviews = _get_reviews(conn, transaction_id)
@@ -618,7 +618,7 @@ def bulk_review(payload: BulkReviewRequest):
     gets, just captured explicitly here since there is no client-loaded
     page state to compare against for a bulk action.
     """
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         review_counts: dict[str, int] = {}
         missing: list[str] = []
@@ -830,7 +830,7 @@ def reverify(payload: ReverificationRequest = ReverificationRequest()):
     # identical whether the matcher re-confirmed the SAME original problem
     # or quietly swapped in a different one nobody has reviewed yet (found
     # via external review).
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         # Was one query for ALL cases plus 2 queries PER CASE
         # (_get_case_row/_get_reviews inside the loop below) -- the exact
@@ -920,7 +920,7 @@ def audit_chain_verify():
     and caching an integrity check would be exactly the wrong instinct --
     the whole point is that it re-derives the answer every time, not that
     it's fast."""
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         return chain.verify_chain(conn)
     finally:
@@ -979,7 +979,7 @@ def qa(payload: QARequest):
 
 @app.get("/api/stats")
 def stats():
-    conn = db.get_connection()
+    conn = db.get_runtime_connection()
     try:
         rows = conn.execute(
             "SELECT transaction_id, amount_at_risk_rupees, gate_final_decision, "

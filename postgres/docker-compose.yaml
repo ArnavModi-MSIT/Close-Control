@@ -10,6 +10,16 @@
 #
 #   docker compose up -d
 #   docker compose down          # add -v to also drop the data volume
+#
+# POSTGRES_USER above becomes a Postgres SUPERUSER (the official image's own
+# behavior) -- used for schema migrations, seeding, and one-off maintenance
+# scripts. The FastAPI app's own request handling does NOT connect as this
+# role; review_backend/db.py's ensure_runtime_role() creates a second,
+# deliberately non-superuser role (review_app_runtime) idempotently on every
+# init_db() call, since REVOKE/RLS enforcement only has teeth against a
+# non-superuser role. See db.py's own docstring for the full reasoning --
+# no separate init script needed here, so this works on an existing
+# container/volume too, not just a fresh one.
 
 services:
   postgres:

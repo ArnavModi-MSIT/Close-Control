@@ -2038,6 +2038,53 @@ flags the stream instance for the frontend's "live simulation" badge.
 Windows). The original SQLite file (`data/review_queue.db`) is kept as a
 rollback safety net, never deleted.
 
+**Database-level enforcement of the append-only invariant
+(`review_backend/db.py`'s `ensure_runtime_role()`, new)** — a real,
+preventive complement to `chain.py`'s hash chain, not a duplicate of it.
+The hash chain is detective: it proves after the fact that a `reviews`
+row was tampered with. This is preventive: Postgres itself now rejects
+the `UPDATE`/`DELETE` this project's own code already promised never to
+issue, rather than only the code promising it.
+
+Idea sharpened by checking a peer Razorpay buildathon repo
+(`soumyakumari0205-svg/AI-Finance-Controller`) past its README into its
+actual `migrations/003_rls_audit_immutability.sql`, which `REVOKE`s
+`UPDATE`/`DELETE` on its own audit table and backs it with Row-Level
+Security. **Verified before porting it, not assumed to transfer
+directly — and it would NOT have, unmodified.** `review_app` (this
+project's own `POSTGRES_USER`) is a Postgres superuser, and superusers
+bypass both `REVOKE` and RLS by Postgres's own design, `FORCE ROW LEVEL
+SECURITY` included. A naive copy of the peer's migration would have
+installed a control that looks real — the SQL runs cleanly, the policies
+exist — while doing nothing at all, since the app already connects as a
+role the control can't bind.
+
+Fixed at the source rather than layering something ineffective on top:
+`ensure_runtime_role()` creates `review_app_runtime`, a second,
+deliberately non-superuser role, idempotently on every `init_db()` call
+(no separate init script needed, so it applies to an already-running
+container too, not just a fresh volume). `review_app` stays a superuser
+and stays the connection every migration/seed/maintenance script uses;
+`review_backend/main.py`'s request handlers now connect via the new
+`get_runtime_connection()` instead — grep-verified first that every one
+of its 9 real `conn.execute()` call sites is `SELECT`/`INSERT` only, never
+`UPDATE`/`DELETE`, so nothing legitimate was ever going to be blocked.
+The restricted role gets `SELECT, INSERT` on `cases`/`reviews`; `UPDATE`,
+`DELETE` are `REVOKE`d explicitly and, since `review_app_runtime` is
+genuinely non-superuser and non-owning, Row-Level Security actually takes
+effect for it too — real belt-and-suspenders, not the illusion of it.
+
+**Verified with a real permission test against the live database, not
+just a code review**: connected as `review_app_runtime` and confirmed
+`SELECT` succeeds, then confirmed `UPDATE`/`DELETE` on `reviews` and
+`UPDATE` on `cases` all fail with Postgres's own
+`InsufficientPrivilege: permission denied for table ...` — genuinely
+rejected by the database, not merely declined by application code — while
+the privileged `review_app` connection remained fully unaffected.
+`test_review_api.py` (97/97) re-run clean afterward, including a real
+`submit_review()` `INSERT` succeeding end-to-end through the new
+restricted connection against the ephemeral test database.
+
 **Image pinning**, following an external review of `postgres/docker-compose.yaml`
 (the other 6 of its 7 claims were already true when checked — healthcheck,
 `restart: unless-stopped`, explicit documented non-conflicting ports, secrets

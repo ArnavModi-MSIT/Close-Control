@@ -28,6 +28,7 @@ longer transaction.
 import os
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 # Overridable so a second server instance can point at a completely
@@ -37,9 +38,26 @@ from psycopg.rows import dict_row
 # produce, the one genuine auto-resolve), and for test_review_api.py's
 # own ephemeral per-run database. Same schema, same code path, just a
 # different database name on the same local Postgres server.
+#
+# This is the PRIVILEGED connection -- review_app is the container's own
+# POSTGRES_USER (postgres/docker-compose.yaml), which the official
+# Postgres image makes a superuser. Used for schema creation, migrations,
+# seed_review_queue.py, one-off maintenance scripts, and test_review_api.py's
+# CREATE/DROP DATABASE calls. The FastAPI app's own request handling does
+# NOT use this connection -- see get_runtime_connection() below.
 DATABASE_URL = os.environ.get(
     "REVIEW_QUEUE_DATABASE_URL",
     "postgresql://review_app:review_app_local_dev@localhost:5433/review_queue",
+)
+
+# The RESTRICTED connection main.py's request handlers actually use.
+# Distinct, non-superuser role -- see ensure_runtime_role()'s own
+# docstring for why review_app itself (a superuser) can't be the one
+# this file's "cases: never UPDATEd by the review app" / "reviews:
+# append-only" invariants are enforced against.
+RUNTIME_ROLE = "review_app_runtime"
+RUNTIME_ROLE_PASSWORD = os.environ.get(
+    "REVIEW_QUEUE_RUNTIME_PASSWORD", "review_app_runtime_local_dev"
 )
 
 SCHEMA_VERSION = "1.0.0"
@@ -128,6 +146,19 @@ CREATE INDEX IF NOT EXISTS idx_reviews_txn ON reviews(transaction_id, id);
 
 def get_connection() -> psycopg.Connection:
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def get_runtime_connection() -> psycopg.Connection:
+    """The connection review_backend/main.py's request handlers actually
+    use -- same host/port/dbname as DATABASE_URL (read fresh on every call,
+    not cached, so it correctly follows test_review_api.py's per-run
+    override of DATABASE_URL to an ephemeral test database), but a
+    different, non-superuser role. See ensure_runtime_role()'s docstring
+    for why this exists."""
+    info = psycopg.conninfo.conninfo_to_dict(DATABASE_URL)
+    info["user"] = RUNTIME_ROLE
+    info["password"] = RUNTIME_ROLE_PASSWORD
+    return psycopg.connect(psycopg.conninfo.make_conninfo(**info), row_factory=dict_row)
 
 
 # Columns added after the DB was first created and seeded (603 real cases
@@ -229,11 +260,83 @@ def _migrate_reviews_decision_check(conn: psycopg.Connection) -> None:
     """)
 
 
+def ensure_runtime_role(conn: psycopg.Connection) -> None:
+    """Idempotently creates review_app_runtime, a restricted, non-superuser
+    role for main.py's own request-handling connections -- distinct from
+    the superuser role (review_app, DATABASE_URL) used for schema
+    migrations, seeding, and one-off maintenance scripts.
+
+    Why this exists: this file's own module docstring already states the
+    invariant -- "cases: Never UPDATEd by the review app", "reviews:
+    append-only" -- and grep confirms main.py's runtime queries really are
+    SELECT/INSERT only, never UPDATE/DELETE. But until now that promise
+    was enforced purely by application-code discipline: review_app (the
+    container's own POSTGRES_USER) is a Postgres superuser, and
+    superusers bypass BOTH `REVOKE` and Row-Level Security, by Postgres
+    design -- confirmed against Postgres's own documented semantics
+    before writing any of this, not assumed. A future bug in main.py
+    could silently violate the append-only invariant and nothing in the
+    database would object; chain.py's hash chain would only prove it
+    happened after the fact.
+
+    review_app_runtime is a genuinely different, non-owning, non-superuser
+    role, so both layers below actually take effect for it (unlike for
+    review_app itself): UPDATE/DELETE are explicitly revoked, and Row-Level
+    Security additionally blocks them -- belt-and-suspenders, the same
+    shape flare19/payment-reconciliation-agent-platform's own review
+    (agent-readonly-guard) and this project's own citation-validity gate
+    already use elsewhere. Idea sharpened by checking a peer Razorpay
+    buildathon repo (soumyakumari0205-svg/AI-Finance-Controller) past its
+    README into its actual migrations/003_rls_audit_immutability.sql --
+    but note the correction: their migration alone would have been
+    silently inert against THIS project's existing role setup, since
+    review_app is a superuser and superusers bypass RLS/REVOKE
+    regardless. The separate, non-superuser runtime role is not optional
+    ceremony; it is the part that makes the control real.
+
+    Runs on every init_db() call (schema creation, every test run, every
+    server startup) -- idempotent throughout: role creation checks
+    pg_roles first, GRANT/REVOKE are safe to repeat, and the RLS policies
+    are dropped and recreated rather than assumed absent."""
+    conn.execute(
+        sql.SQL("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role}) THEN
+                    EXECUTE format('CREATE ROLE %I WITH LOGIN PASSWORD %L', {role}, {password});
+                ELSE
+                    EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', {role}, {password});
+                END IF;
+            END
+            $$;
+        """).format(role=sql.Literal(RUNTIME_ROLE), password=sql.Literal(RUNTIME_ROLE_PASSWORD))
+    )
+
+    conn.execute(sql.SQL("GRANT SELECT, INSERT ON cases, reviews TO {}").format(sql.Identifier(RUNTIME_ROLE)))
+    conn.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(sql.Identifier(RUNTIME_ROLE)))
+    conn.execute(sql.SQL("REVOKE UPDATE, DELETE ON cases, reviews FROM {}").format(sql.Identifier(RUNTIME_ROLE)))
+
+    for table in ("cases", "reviews"):
+        table_id = sql.Identifier(table)
+        conn.execute(sql.SQL("ALTER TABLE {} ENABLE ROW LEVEL SECURITY").format(table_id))
+        conn.execute(sql.SQL("ALTER TABLE {} FORCE ROW LEVEL SECURITY").format(table_id))
+        for policy, clause in (("select", "FOR SELECT USING (true)"),
+                                ("insert", "FOR INSERT WITH CHECK (true)"),
+                                ("no_update", "FOR UPDATE USING (false)"),
+                                ("no_delete", "FOR DELETE USING (false)")):
+            policy_name = sql.Identifier(f"{table}_{policy}_policy")
+            conn.execute(sql.SQL("DROP POLICY IF EXISTS {} ON {}").format(policy_name, table_id))
+            conn.execute(
+                sql.SQL("CREATE POLICY {} ON {} " + clause).format(policy_name, table_id)
+            )
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.execute(SCHEMA)
         _migrate(conn)
+        ensure_runtime_role(conn)
         conn.commit()
     finally:
         conn.close()
