@@ -198,6 +198,11 @@ RazorPay/
 │                                                    never import agent/investigator/qa_agent -- "AI
 │                                                    proposes, deterministic code disposes" as a
 │                                                    tested property, not just prose, see §9
+├── test_deterministic_core_purity.py                static-scan guard proving matching/
+│                                                    cash_position/ingestion never read the wall
+│                                                    clock, call unseeded randomness, or read an
+│                                                    env var directly -- promotes a one-time manual
+│                                                    review-pass check into a standing guard, see §9
 ├── test_exception_priority_coverage.py             exhaustive 91-combination sweep proving
 │                                                   matching/report.py's EXCEPTION_PRIORITY resolves
 │                                                   every reachable signal combination -- found and
@@ -4249,6 +4254,25 @@ embeddings turned out to be the wrong tool.
   temporarily-injected `import agent.config` into `matching/report.py`
   was caught at the exact line and module name, then the file was
   restored and confirmed byte-identical via `git diff`.
+- **The deterministic core is reproducible from its inputs alone.**
+  `matching/`, `cash_position/`, and `ingestion/` may never read the wall
+  clock, call unseeded randomness, or read an environment variable
+  directly — every one of those would make the same inputs produce a
+  different output on a different day or machine, which is exactly what
+  `DEFAULT_AS_OF`/`RNG_SEED` exist to prevent. This was previously only a
+  one-time, hand-verified claim (see the `cash_position/` review pass:
+  "`DEFAULT_AS_OF` verified to never be shadowed by `datetime.date.today()`
+  anywhere in the actual demo path"), not a standing guard.
+  `test_deterministic_core_purity.py` closes that gap, idea sharpened by
+  checking a peer buildathon repo (`ShauryaBansal01/Kosh`) past its
+  README into its actual `tests/invariants/no-io-in-domain.test.ts` —
+  deliberately narrower than its own "no I/O at all" rule, since this
+  project's `matching/loaders.py` legitimately reads CSV files itself and
+  a blanket I/O ban would be false for real, sanctioned code; what
+  actually threatens reproducibility is specifically the clock,
+  unseeded randomness, and env-var-driven config drift. Verified
+  non-vacuous with a real tamper test the same way as the boundary test
+  above.
 - **The AI's original proposal is immutable.** `seed_review_queue.py`
   never overwrites a seeded case's frozen AI-proposal columns; later
   layers (investigation results, re-verification's `auto_closed` decision)
