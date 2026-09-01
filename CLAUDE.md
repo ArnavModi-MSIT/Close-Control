@@ -193,6 +193,11 @@ RazorPay/
 ├── test_ground_truth_isolation.py                 static-scan guard proving "only evaluate.py
 │                                                   reads ground_truth.csv" holds in the real code,
 │                                                   not just as manual discipline, see §9
+├── test_architecture_boundary.py                   two-tier (static AST + runtime subprocess)
+│                                                    guard proving matching/cash_position/ingestion
+│                                                    never import agent/investigator/qa_agent -- "AI
+│                                                    proposes, deterministic code disposes" as a
+│                                                    tested property, not just prose, see §9
 ├── test_exception_priority_coverage.py             exhaustive 91-combination sweep proving
 │                                                   matching/report.py's EXCEPTION_PRIORITY resolves
 │                                                   every reachable signal combination -- found and
@@ -4226,6 +4231,24 @@ embeddings turned out to be the wrong tool.
   (flare19/payment-reconciliation-agent-platform) past its README into its
   actual `truth-leak-guard.test.ts`. Building it surfaced the
   `run_baseline_naive.py` fact above, previously undocumented.
+- **The deterministic core never imports the AI layer.** `matching/`,
+  `cash_position/`, and `ingestion/` compute financial facts; none of them
+  may depend on `agent/`, `investigator/`, or `qa_agent/` — the direction
+  "AI proposes, deterministic code disposes" already implied but had
+  never been tested as a real property of the code. `test_architecture
+  _boundary.py` proves it two ways (a static AST scan, plus a subprocess
+  runtime check that importing the core never actually loads the agent
+  package or a provider SDK), idea sharpened by checking a peer buildathon
+  repo (`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into
+  its own `test_architecture_boundary.py` — its version found and closed a
+  real gap in its own project (only a narrow check on one reporting
+  script existed, not the modules that actually compute financial
+  outcomes). Verified this project's own core was already clean before
+  writing the test (zero exemptions needed, unlike the peer's one), and
+  verified the test itself is non-vacuous with a real tamper test: a
+  temporarily-injected `import agent.config` into `matching/report.py`
+  was caught at the exact line and module name, then the file was
+  restored and confirmed byte-identical via `git diff`.
 - **The AI's original proposal is immutable.** `seed_review_queue.py`
   never overwrites a seeded case's frozen AI-proposal columns; later
   layers (investigation results, re-verification's `auto_closed` decision)
