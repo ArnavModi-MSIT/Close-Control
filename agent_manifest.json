@@ -1,5 +1,5 @@
 {
-  "agent_name": "AI Finance Controller -- Exception Resolution Agent",
+  "agent_name": "Close Control -- Exception Resolution Agent",
   "category": "automated multi-source settlement reconciliation",
   "summary": "Matches payment gateway, bank statement, internal settlement ledger, and Razorpay Capital loan-recovery records deterministically; for the residual it cannot resolve by rule, proposes a classification and root cause grounded only in evidence it was actually shown; a separate, unmodified deterministic gate decides whether that proposal is trustworthy enough to auto-resolve or must go to a human. This file is generated to be read, not written to justify a decision after the fact -- every claim below is a real, currently-true property of the code cited next to it, not a policy aspiration.",
 

@@ -1,4 +1,4 @@
-# CLAUDE.md — AI Finance Controller
+# CLAUDE.md — Close Control (AI Finance Controller)
 
 **Purpose of this file:** the detailed working record for this project —
 for an AI assistant picking it up cold, and for a human going deeper than

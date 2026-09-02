@@ -1,4 +1,6 @@
-# AI Finance Controller
+# Close Control
+
+**An AI Finance Controller for multi-source settlement reconciliation.**
 
 Submission for Razorpay's `/buildathon`, Track 04 — **"Run the books and
 the cash position."**
