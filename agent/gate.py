@@ -48,7 +48,7 @@ inversion a financial control boundary must not allow.
 
 from . import config
 from .policy_kb import get_policy
-from .evidence import validate_evidence_citations, check_root_cause_contradiction
+from .evidence import validate_evidence_citations, check_root_cause_contradiction, check_numeric_grounding
 
 
 def _compute_amount_at_risk(report_row: dict) -> float:
@@ -175,6 +175,37 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
     root_cause_contradiction_flags = check_root_cause_contradiction(
         getattr(resolution, "root_cause", ""), "auto_resolve" if auto_resolve else "escalate")
 
+    # Numeric-grounding check, informational only -- does root_cause or
+    # drafted_communication state a number that never actually appeared in
+    # a real tool result during THIS investigation? Same "the LLM never
+    # touches a number" principle already enforced on citations and policy
+    # IDs above, applied to prose. Deliberately scoped to investigator/
+    # results only (a non-empty investigation_log): the single-shot
+    # agent/client.py path calls no tools at all, so checking its
+    # root_cause against an empty tool_log would flag every real number it
+    # legitimately cited from the evidence block as "ungrounded" -- not
+    # what this check is for. See agent/evidence.py's check_numeric_grounding()
+    # for the shared implementation (also used by qa_agent/grounding.py).
+    investigation_log = getattr(resolution, "investigation_log", None)
+    if investigation_log:
+        # The model also legitimately sees (and correctly cites) these
+        # fields from the initial evidence block before it ever calls a
+        # tool -- see build_evidence() -- so they count as grounded too,
+        # not just what a tool call happened to return.
+        evidence_numbers = [
+            report_row.get(f) for f in
+            ("ledger_expected_net_rupees", "observed_net_rupees", "net_delta_rupees")
+            if report_row.get(f) is not None
+        ]
+        numeric_grounding = check_numeric_grounding(
+            (getattr(resolution, "root_cause", "") or "") + "\n"
+            + (getattr(resolution, "drafted_communication", None) or ""),
+            investigation_log,
+            extra_grounded_numbers=evidence_numbers,
+        )
+    else:
+        numeric_grounding = {"claimed_numbers": [], "ungrounded_numbers": [], "all_grounded": True}
+
     # Structured, per-condition PASS/FAIL breakdown -- purely a presentation
     # layer over the seven booleans already computed above, not new gate
     # logic on top of what auto_resolve already checked. `gate_reasons`
@@ -246,4 +277,6 @@ def apply_gate(resolution, report_row: dict, extra_valid_evidence_ids: frozenset
         "all_evidence_citations_valid": len(unknown_evidence_citations) == 0,
         "root_cause_contradiction_flags": root_cause_contradiction_flags,
         "root_cause_consistent": len(root_cause_contradiction_flags) == 0,
+        "numeric_grounding_flags": numeric_grounding["ungrounded_numbers"],
+        "numerically_grounded": numeric_grounding["all_grounded"],
     }

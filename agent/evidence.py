@@ -115,11 +115,11 @@ def check_root_cause_contradiction(root_cause: str, gate_decision: str) -> list[
 # 211 already cite a raw POLICY-### id, and one draft (trn-000098) reads
 # "Escalate for refund per POLICY-009. No auto-resolution permitted." Word-
 # boundary regex used for short/ambiguous tokens like "gate" specifically
-# because a naive substring check (the peer's own approach) would false-
-# -positive on "investigate"/"gateway", both of which appear routinely in
-# real drafts -- verified zero real standalone "gate" matches exist, so
-# this guard doesn't need to loosen anything to stay clean, only avoid a
-# self-inflicted false-positive risk.
+# because a naive substring check would false-positive on
+# "investigate"/"gateway", both of which appear routinely in real drafts --
+# verified zero real standalone "gate" matches exist, so this guard doesn't
+# need to loosen anything to stay clean, only avoid a self-inflicted
+# false-positive risk.
 import re as _re
 
 _LEAKAGE_SUBSTRING_PHRASES = (
@@ -150,6 +150,190 @@ def check_communication_leakage(drafted_communication: str) -> list[str]:
         if m:
             flags.append(m.group(0).lower())
     return flags
+
+
+# Numeric-grounding check: does every number the model states in a free-text
+# field actually trace back to a real number it was shown or a tool call
+# actually returned? Same "the LLM never touches a number" principle this
+# gate already enforces on citations and policy IDs, applied to prose --
+# a free-text narrative has nowhere as clean a place to enforce it as a
+# structured field does, so this checks the text after the fact, the same
+# way validate_evidence_citations() checks a citation list after the fact
+# rather than constraining generation directly.
+#
+# The single shared implementation -- qa_agent/grounding.py wraps this for
+# its own Q&A-answer surface rather than keeping an independently
+# -maintained copy. Public names (extract_numbers, collect_grounded_numbers,
+# check_numeric_grounding) are kept stable since qa_agent/grounding.py and
+# its own tests import them directly.
+#
+# The leading `-?` inside the capture group (not before it) was added after
+# the same real-data sweep: "= -8,660.31)" was extracting only "660.31" --
+# the lookbehind correctly refuses to start a match AT the "-" preceded by
+# a digit-excluded char, but a naive minus-then-digit split leaves the
+# comma-grouped run's own leading digit stranded on the wrong side of the
+# sign. Consuming the sign as part of the token (only once, only when a
+# digit immediately follows it) fixes that without weakening the
+# trn-000237-style identifier exclusion at all: a hyphen directly between
+# two digit runs with no space (e.g. "617-154") still can't start a match
+# on either side, since the lookbehind/lookahead still treat that shape as
+# one opaque token, exactly as before this change.
+_NUMBER_RE = _re.compile(
+    r"(?<![A-Za-z0-9_./-])"
+    r"(?:₹|Rs\.?\s?)?"
+    r"(-?\d[\d,]*(?:\.\d+)?)"
+    r"%?"
+    r"(?![A-Za-z0-9_/-])"
+)
+
+
+def extract_numbers(text: str) -> list[float]:
+    """Every standalone numeric literal in `text`, comma-grouping and
+    currency prefixes stripped. Not claimed to be perfect (a bare year like
+    "2026" parses as a number too), which is fine -- this check is
+    informational, not a hard gate, so false positives on incidental
+    numbers are an acceptable cost for catching genuinely invented
+    figures."""
+    numbers = []
+    for m in _NUMBER_RE.finditer(text or ""):
+        raw = m.group(1).replace(",", "")
+        try:
+            numbers.append(float(raw))
+        except ValueError:
+            continue
+    return numbers
+
+
+_ISO_DATE_RE = _re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+
+def _walk_numbers(obj) -> list[float]:
+    """Recursively pulls every real number out of a tool result -- dicts,
+    lists, and numeric-looking strings all searched, since a tool result is
+    arbitrary JSON-shaped data, not a flat record.
+
+    A string value additionally gets its ISO-date components (year/month/
+    day) pulled out separately from extract_numbers()'s own identifier
+    -safe scan. Found via a real false-positive sweep of every logged
+    investigation, not assumed: search_bank_statement() legitimately
+    returns dates as "2026-07-14" -- extract_numbers() correctly treats
+    that as an opaque token (the same hyphen-exclusion rule that keeps it
+    from extracting "000237" out of "trn-000237"), so a tool result's own
+    real date never became a grounded number on its own, even though the
+    model's prose restating it as "July 14, 2026" is completely faithful.
+    This only widens what a TOOL RESULT can ground -- extract_numbers()
+    itself, used on the model's own claimed text, is untouched, so a
+    transaction id in the model's own prose still can't smuggle a number
+    through."""
+    if isinstance(obj, bool):
+        return []  # bool is an int subclass in Python; never a real "claimed number"
+    if isinstance(obj, (int, float)):
+        return [float(obj)]
+    if isinstance(obj, dict):
+        out = []
+        for v in obj.values():
+            out.extend(_walk_numbers(v))
+        return out
+    if isinstance(obj, list):
+        out = []
+        for v in obj:
+            out.extend(_walk_numbers(v))
+        return out
+    if isinstance(obj, str):
+        numbers = extract_numbers(obj)
+        for m in _ISO_DATE_RE.finditer(obj):
+            year, month, day = m.groups()
+            numbers.extend([float(year), float(int(month)), float(int(day))])
+        return numbers
+    return []
+
+
+def _tool_log_result(record):
+    """A tool_log entry may be a real ToolCallRecord (investigator/qa_agent's
+    own pydantic object -- .result attribute) or a plain dict reconstructed
+    from raw JSONL (seed_review_queue.py's SimpleNamespace recompute path,
+    which never has a real InvestigationResult to work from) -- accept
+    either rather than forcing every caller to normalize first."""
+    if isinstance(record, dict):
+        return record.get("result")
+    return getattr(record, "result", None)
+
+
+def collect_grounded_numbers(tool_log) -> set:
+    """Every number that genuinely appeared in a real tool call result
+    during this conversation/investigation -- the ground truth a claim is
+    checked against."""
+    grounded = set()
+    for record in tool_log or []:
+        for n in _walk_numbers(_tool_log_result(record)):
+            grounded.add(round(n, 4))
+    return grounded
+
+
+def _pairwise_derived_numbers(grounded: set) -> set:
+    """Every sum and absolute difference of two distinct grounded numbers --
+    a legitimately-derived figure (e.g. "497 total, 20 shown, 477
+    remaining") must not be flagged just because it never appears as a
+    literal value in any single tool result. Deliberately ONLY sum and
+    difference, not products or ratios: those would open real room for a
+    genuinely fabricated number to coincidentally match some combination."""
+    values = list(grounded)
+    derived = set()
+    for i, a in enumerate(values):
+        for b in values[i + 1:]:
+            derived.add(round(a + b, 4))
+            derived.add(round(abs(a - b), 4))
+    return derived
+
+
+def _is_grounded(claimed: float, grounded: set, tol_rupees: float, tol_pct: float) -> bool:
+    tol = max(tol_rupees, abs(claimed) * tol_pct)
+    return any(abs(claimed - g) <= tol for g in grounded)
+
+
+def check_numeric_grounding(text: str, tool_log, *, extra_grounded_numbers=None,
+                             tol_rupees: float = 1.00, tol_pct: float = 0.005) -> dict:
+    """Does every number in `text` trace back to something a real tool call
+    actually returned in `tool_log`, a number in `extra_grounded_numbers`,
+    or a simple sum/difference of two grounded values? Returns
+    {claimed_numbers, ungrounded_numbers, all_grounded} -- informational
+    only, the same "flag, don't hide" contract as
+    validate_evidence_citations() before its own promotion to a hard gate
+    condition. tol_rupees/tol_pct default to a flat rupee floor OR a
+    relative percentage, whichever is larger -- generous enough that
+    restating "Rs.5,54,613" for a real "Rs.5,54,612.74" isn't flagged,
+    tight enough that an invented six-figure sum still is.
+
+    extra_grounded_numbers: numbers real but NOT sourced from a tool call --
+    e.g. investigator/'s own initial evidence block (observed_net_rupees
+    etc.), which the model legitimately sees and cites before it ever calls
+    a tool. Found via the same real-data sweep that motivated the ISO-date
+    fix above: an investigation's "observed" figure almost always comes
+    from that static block, never a tool result (there is no "get me the
+    observed amount" tool separate from it), so without this every
+    faithful restatement of it read as fabricated."""
+    if not text:
+        return {"claimed_numbers": [], "ungrounded_numbers": [], "all_grounded": True}
+    claimed = extract_numbers(text)
+    grounded_set = collect_grounded_numbers(tool_log)
+    if extra_grounded_numbers:
+        grounded_set = grounded_set | {round(float(n), 4) for n in extra_grounded_numbers}
+    # extract_numbers() never captures a leading minus sign (prose says
+    # "reduced by Rs.8,660.31", not "Rs.-8,660.31"), but a real grounded
+    # figure like net_delta_rupees is routinely negative (a shortfall) --
+    # found via the same real-data sweep, a genuinely faithful restatement
+    # of a negative delta's magnitude was being flagged as fabricated
+    # purely because of the sign convention mismatch. Adding the absolute
+    # value alongside every grounded number (not instead of it) fixes that
+    # without loosening what counts as a match otherwise.
+    grounded_set = grounded_set | {abs(g) for g in grounded_set}
+    checkable = grounded_set | _pairwise_derived_numbers(grounded_set)
+    ungrounded = [c for c in claimed if not _is_grounded(c, checkable, tol_rupees, tol_pct)]
+    return {
+        "claimed_numbers": claimed,
+        "ungrounded_numbers": ungrounded,
+        "all_grounded": len(ungrounded) == 0,
+    }
 
 
 def validate_evidence_citations(evidence_used: list[str], extra_valid_ids: frozenset = frozenset()) -> list[str]:

@@ -1953,6 +1953,73 @@ deliberately informational, not-yet-a-hard-gate-condition posture as
 supplementary context a human reviews before actually sending anything,
 never auto-dispatched by this codebase.
 
+**Numeric-grounding check extended to `investigator/`'s own free text
+(`agent/evidence.py`'s `check_numeric_grounding()`), informational only.**
+`qa_agent/grounding.py` already checked every number in a Q&A answer
+against real tool results, but `investigator/`'s own `root_cause` /
+`drafted_communication` had no equivalent — a fabricated figure in the
+investigator's own narrative (not just Q&A) could slip through uncaught.
+Fixed by moving the shared extraction/tolerance logic into
+`agent/evidence.py` as the single canonical implementation (`extract_numbers`,
+`collect_grounded_numbers`, `check_numeric_grounding` — all public, all
+kept name-stable) and having `qa_agent/grounding.py` become a thin wrapper
+around it that preserves its own exact public API and `GroundingCheck`
+return type — no other qa_agent file or test needed to change.
+`agent/gate.py`'s `apply_gate()` now computes this for any resolution
+carrying a real `investigation_log`, surfaced as `numeric_grounding_flags`
+/ `numerically_grounded`. Deliberately scoped to investigator/ results
+only: the single-shot `agent/client.py` path calls no tools at all, so
+checking its root_cause against an empty tool log would flag every real
+number it legitimately cited from the static evidence block as fabricated
+— confirmed this isn't hypothetical with a dedicated test
+(`test_numeric_grounding_scoped_to_investigator_only`).
+
+**A real, substantial false-positive rate found and driven to zero before
+shipping, not assumed clean.** Swept the check against every real
+investigation with actual tool use in `data/investigation_log.jsonl`
+(279) before adopting it, same discipline as every other check in this
+file — first pass: **20.1% flagged**, dominated by two genuine gaps, not
+noise:
+1. *Dates.* `search_bank_statement()` returns dates as `"2026-07-14"` —
+   `extract_numbers()` correctly treats a hyphenated string as an opaque
+   token (the same rule that keeps it from extracting `000237` out of
+   `trn-000237`), so a tool result's own real date never became a
+   grounded number, even though the model's prose restating it as "July
+   14, 2026" was completely faithful. Fixed by having `_walk_numbers()`
+   additionally pull ISO-date components (year/month/day) out of a tool
+   result's own string values specifically — `extract_numbers()` itself,
+   used on the model's CLAIMED text, is untouched, so a transaction id in
+   the model's own prose still can't smuggle a number through.
+2. *The static evidence block.* An investigation's "observed" figure
+   almost always comes from `build_evidence()`'s initial block
+   (`observed_net_rupees`), never a tool call — there's no "get me the
+   observed amount" tool separate from it — so restating it read as
+   fabricated. Fixed with a new `extra_grounded_numbers` parameter on
+   `check_numeric_grounding()`; `apply_gate()` passes the report_row's own
+   `ledger_expected_net_rupees` / `observed_net_rupees` / `net_delta_rupees`.
+
+Second pass, after both fixes: **0.7% (1 real case)**. Root cause: a
+comma-grouped **negative** figure in prose — `"= -8,660.31)"` — was
+extracting only `"660.31"`, because the lookbehind correctly refuses to
+start a match at a `-` preceded by a digit-excluded character, but a
+naive minus-then-digit split left the comma-grouped run's leading digit
+stranded on the wrong side of the sign. Fixed by consuming the sign as
+part of the token (`-?` inside the capture group, not before it) —
+verified this doesn't weaken the `trn-000237`-style identifier exclusion
+at all: a hyphen directly between two digit runs with no space (`617-154`)
+still can't start a match on either side, unchanged from before. Also
+added: grounding the absolute value alongside every signed grounded
+number, since prose says "reduced by ₹8,660.31," never "reduced by
+₹-8,660.31." **Third pass: 0/279 (0.00%).**
+
+Verified: `test_gate.py` (16/16, three new tests — scoping to
+investigator/ only, catching a genuinely fabricated number, and a
+regression test pinned to the exact real trn-001454 case that exposed the
+sign bug), `test_qa_agent.py` (34/34, confirming the `qa_agent/grounding.py`
+refactor is byte-for-byte behavior-preserving), `test_review_api.py`
+(97/97), and a real `seed_review_queue.py` re-seed against the live
+617-case demo database (617 unchanged, 0 conflicts).
+
 **Machine-readable AI-governance declaration (`agent_manifest.json`, new,
 repo root)** — a structured file stating exactly what the agent
 reads/writes, every action it can and can't take, and what a human can

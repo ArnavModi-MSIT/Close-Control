@@ -86,6 +86,9 @@ def print_case_trace(row_dict: dict, result, gate_result: dict):
         leaks = check_communication_leakage(result.drafted_communication)
         if leaks:
             print(f"  [WARN] internal-jargon leakage in externally-facing draft: {leaks}")
+    if not gate_result["numerically_grounded"]:
+        print(f"  [WARN] number(s) in root_cause/drafted_communication not traceable to any "
+              f"real tool result: {gate_result['numeric_grounding_flags']}")
     print()
     print(f"GATE DECISION: {gate_result['final_decision']}  ({gate_result['agent_status']})")
     for reason in gate_result["gate_reasons"]:

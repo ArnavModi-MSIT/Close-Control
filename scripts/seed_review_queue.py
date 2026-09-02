@@ -232,6 +232,18 @@ def _primary_from_investigation(inv_entry: dict, report_row: dict) -> dict:
         # though apply_gate() itself never raises (getattr default, not an
         # AttributeError this time) -- fixed at the source instead.
         root_cause=inv_entry.get("root_cause") or "",
+        # Same class of gap again, for apply_gate()'s numeric-grounding
+        # check (check_numeric_grounding() -- also agent/evidence.py):
+        # investigation_log entries here are plain dicts straight from the
+        # raw JSONL (not investigator.schema.ToolCallRecord objects), which
+        # check_numeric_grounding()'s own tool-log reader accepts directly
+        # (dict or object, both handled) -- no reconstruction needed.
+        # Without this attribute, apply_gate() would silently see an empty
+        # tool log for every investigator-primary case and never actually
+        # check anything, the identical failure mode root_cause had before
+        # it was added above.
+        investigation_log=inv_entry.get("investigation_log") or [],
+        drafted_communication=inv_entry.get("drafted_communication"),
     )
     # investigation_log.jsonl stores each tool call's own record (not an
     # InvestigationResult object), so tool_evidence_ids() itself can't be

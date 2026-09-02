@@ -25,6 +25,7 @@ from agent.gate import apply_gate
 from agent.schema import ExceptionResolution
 from agent.evidence import check_communication_leakage
 from agent import config
+from investigator.schema import InvestigationResult, ToolCallRecord
 
 
 def resolution(**overrides):
@@ -231,6 +232,77 @@ def test_communication_leakage_word_boundary_avoids_false_positive():
     print("PASS -- 'investigate'/'gateway' text does not false-positive on the 'gate' guard")
 
 
+def _investigation(**overrides):
+    """An InvestigationResult with one real-shaped tool call, so the
+    numeric-grounding check has something concrete to ground against."""
+    defaults = dict(
+        exception_type="unexplained_shortage",
+        policy_id="POLICY-007",
+        root_cause="test fixture -- not a real LLM response",
+        evidence_used=["EVIDENCE-8"],
+        recommended_action="test fixture",
+        confidence=0.90,
+        sufficient_evidence=True,
+        investigation_log=[
+            ToolCallRecord(step=1, tool_name="search_bank_statement", arguments={},
+                            result={"searched_expected_amount_rupees": 500.0, "candidate_count": 0}),
+        ],
+    )
+    defaults.update(overrides)
+    return InvestigationResult(**defaults)
+
+
+def test_numeric_grounding_scoped_to_investigator_only():
+    """The single-shot agent/client.py path never calls a tool, so it has
+    no investigation_log at all -- checking its root_cause against an
+    empty tool log would flag every real number it legitimately cited from
+    the static evidence block as fabricated. apply_gate() must skip the
+    check entirely for this path (numerically_grounded stays True) rather
+    than false-flag it."""
+    gate = apply_gate(
+        resolution(root_cause="A wildly specific Rs.9,87,654.32 figure appears here."),
+        report_row())
+    assert gate["numerically_grounded"] is True
+    assert gate["numeric_grounding_flags"] == []
+    print("PASS -- single-shot resolution (no investigation_log) is never checked")
+
+
+def test_numeric_grounding_catches_fabricated_number():
+    """A number in root_cause that never appeared in any real tool result
+    (and isn't the report_row's own expected/observed/delta) is flagged --
+    proving the check actually catches something, not just stays quiet."""
+    gate = apply_gate(
+        _investigation(root_cause="The shortfall is exactly Rs.42,000.00, confirmed."),
+        report_row())
+    assert gate["numerically_grounded"] is False
+    assert 42000.0 in gate["numeric_grounding_flags"]
+    print("PASS -- a number absent from both the tool log and the evidence block is flagged")
+
+
+def test_numeric_grounding_real_observed_case_not_false_flagged():
+    """Regression test for a real false positive found and fixed while
+    building this check, against trn-001454's actual logged investigation:
+    root_cause states 'reduced ... by Rs.8,660.31' where the real
+    net_delta_rupees is -8660.31 (a shortfall, prose drops the sign) --
+    the number-extraction regex was originally losing the leading digit
+    group of a negative comma-grouped figure entirely ('-8,660.31' ->
+    '660.31'), and separately, extra_grounded_numbers didn't cover the
+    sign-stripped case at all. Both are fixed; this proves it stays fixed."""
+    gate = apply_gate(
+        _investigation(
+            root_cause="A refund/adjustment reduced the settlement amount by Rs.8,660.31 "
+                       "(delta: observed - expected = 14,777.05 - 23,437.36 = -8,660.31).",
+            investigation_log=[
+                ToolCallRecord(step=1, tool_name="search_bank_statement", arguments={},
+                                result={"searched_expected_amount_rupees": 23437.36, "candidate_count": 0}),
+            ],
+        ),
+        report_row(net_delta_rupees=-8660.31, ledger_expected_net_rupees=23437.36,
+                   observed_net_rupees=14777.05))
+    assert gate["numerically_grounded"] is True, gate["numeric_grounding_flags"]
+    print("PASS -- real observed case (negative delta stated unsigned in prose) no longer false-flags")
+
+
 ALL_TESTS = [
     test_success_all_conditions_met,
     test_policy_missing,
@@ -245,6 +317,9 @@ ALL_TESTS = [
     test_root_cause_consistent_on_normal_text,
     test_communication_leakage_catches_real_observed_leak,
     test_communication_leakage_word_boundary_avoids_false_positive,
+    test_numeric_grounding_scoped_to_investigator_only,
+    test_numeric_grounding_catches_fabricated_number,
+    test_numeric_grounding_real_observed_case_not_false_flagged,
 ]
 
 
