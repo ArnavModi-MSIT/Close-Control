@@ -1,17 +1,12 @@
 """Guards the direction of this project's core rule: "AI proposes,
 deterministic code disposes."
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(SuryaSK-dev/razorpay-ai-finance-controller) past its README into its
-actual tests/test_architecture_boundary.py, which found a real gap in
-its own project: the rule was asserted in prose (README/ARCHITECTURE.md)
-and enforced informally, but nothing tested that the deterministic core
-never imports the AI layer -- only a much narrower check on one reporting
-script existed. Checking this project's own real code first (grep, not
-assumed): matching/, cash_position/, and ingestion/ genuinely never
-import agent/, investigator/, or qa_agent/ -- the property already holds,
-it just wasn't tested. This file closes that gap the same way, adapted to
-this project's own module layout, with the same two-tier discipline:
+The rule was asserted in prose (CLAUDE.md) and enforced informally, but
+nothing tested that the deterministic core never imports the AI layer.
+Checking this project's own real code first (grep, not assumed):
+matching/, cash_position/, and ingestion/ genuinely never import agent/,
+investigator/, or qa_agent/ -- the property already holds, it just wasn't
+tested. This file closes that gap with a two-tier discipline:
 
     STATIC   no core module may reference agent/investigator/qa_agent
              (zero exemptions currently needed -- verified clean)
@@ -44,8 +39,7 @@ AGENT_PACKAGES = ("agent", "investigator", "qa_agent")
 
 # No exemptions currently needed -- verified clean by grep before writing
 # this test. If one is ever legitimately required, name it here with the
-# reasoning, the same discipline the peer repo's own single exemption
-# followed, rather than weakening the check below.
+# reasoning, rather than weakening the check below.
 EXEMPTIONS: set[tuple[str, str]] = set()
 
 

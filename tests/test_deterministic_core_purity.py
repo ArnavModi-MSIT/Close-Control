@@ -4,23 +4,19 @@ check (that one proves matching/cash_position/ingestion never depend on
 the AI layer; this one proves they never depend on non-deterministic
 system state).
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(ShauryaBansal01/Kosh) past its README into its actual
-tests/invariants/no-io-in-domain.test.ts, which statically greps its
-domain layer for `new Date()`, `Date.now()`, `process.env`, and
-`Math.random()` -- "the first time someone reaches for `new Date()`
-inside a deadline calculation the test will not be watching" without a
-structural guard. This project already had the equivalent claim, but
-only ever verified once, by hand, during an external review pass (see
-CLAUDE.md's cash_position/ section: "DEFAULT_AS_OF verified to never be
-shadowed by datetime.date.today() anywhere in the actual demo path") --
-a one-time check, not a standing regression guard. Checked this
+This project already had the equivalent claim, but only ever verified
+once, by hand, during an external review pass (see CLAUDE.md's
+cash_position/ section: "DEFAULT_AS_OF verified to never be shadowed by
+datetime.date.today() anywhere in the actual demo path") -- a one-time
+check, not a standing regression guard: the first time someone reaches
+for a wall-clock read inside a deadline calculation, nothing would be
+watching for it without a structural guard. Checked this
 project's own code first (grep, not assumed) before writing this test:
 matching/, cash_position/, and ingestion/ genuinely never read the wall
 clock, call unseeded randomness, or read an environment variable
 directly -- the property already held.
 
-Deliberately narrower than Kosh's own "no I/O" rule: this project's
+Deliberately narrower than a blanket "no I/O" rule: this project's
 matching/loaders.py legitimately reads CSV files itself (this codebase
 has no separate I/O-free "domain layer" one level further in), so a
 blanket I/O ban would be false for real, sanctioned code. What actually
@@ -58,10 +54,7 @@ def _core_files():
 def _non_comment_lines(path: Path):
     """Line text with leading '#'-only lines and blank lines dropped, so a
     comment mentioning e.g. 'os.environ' in an explanatory docstring
-    doesn't trip the guard -- same false-positive concern
-    test_architecture_boundary.py's own peer source (diagram-drift's
-    ghost-feature check) raises about a guard tripping on its own
-    documentation."""
+    doesn't trip the guard on its own documentation."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     docstring_lines: set[int] = set()
     for node in ast.walk(tree):

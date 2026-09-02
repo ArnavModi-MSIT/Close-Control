@@ -283,14 +283,10 @@ def ensure_runtime_role(conn: psycopg.Connection) -> None:
     role, so both layers below actually take effect for it (unlike for
     review_app itself): UPDATE/DELETE are explicitly revoked, and Row-Level
     Security additionally blocks them -- belt-and-suspenders, the same
-    shape flare19/payment-reconciliation-agent-platform's own review
-    (agent-readonly-guard) and this project's own citation-validity gate
-    already use elsewhere. Idea sharpened by checking a peer Razorpay
-    buildathon repo (soumyakumari0205-svg/AI-Finance-Controller) past its
-    README into its actual migrations/003_rls_audit_immutability.sql --
-    but note the correction: their migration alone would have been
-    silently inert against THIS project's existing role setup, since
-    review_app is a superuser and superusers bypass RLS/REVOKE
+    shape this project's own citation-validity gate already uses
+    elsewhere. A REVOKE/RLS migration applied to review_app alone would
+    have been silently inert against this project's existing role setup,
+    since review_app is a superuser and superusers bypass RLS/REVOKE
     regardless. The separate, non-superuser runtime role is not optional
     ceremony; it is the part that makes the control real.
 

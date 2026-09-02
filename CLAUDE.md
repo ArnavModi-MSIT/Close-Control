@@ -390,11 +390,7 @@ RazorPay/
   each, dead consistent): `localhost` averages 2053ms/call, `127.0.0.1`
   averages 23ms/call, an **89x difference**, present on every single
   Ollama HTTP call this project makes (Windows tries IPv6 first for
-  `localhost` and only falls back to IPv4 after a real timeout). Idea
-  sharpened by checking a peer Razorpay buildathon repo (`niy-ati/recon-
-  engine`) past its README into its own measured claim of the same
-  quirk — verified independently on this machine before trusting it, not
-  assumed from their number. Every `OLLAMA_HOST` default across
+  `localhost` and only falls back to IPv4 after a real timeout). Every `OLLAMA_HOST` default across
   `agent/config.py`, `investigator/config.py`, `qa_agent/config.py`,
   `agent/providers/ollama.py`, and `agent/run_summary.py` now defaults to
   `http://127.0.0.1:11434` instead — verified end to end with a real live
@@ -1038,14 +1034,12 @@ database afterward, `counts_by_status` unchanged.
 
 ### matching/ (Layer 2)
 **A real, previously-undetected bug, found and fixed via an exhaustive
-coverage proof (`test_exception_priority_coverage.py`, new)** — idea
-sharpened by checking a peer Razorpay buildathon repo
-(`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into its
-actual `tests/test_decision_table.py`, which exhaustively enumerates all
-2,048 combinations of its own decision context and proves every one
-resolves via its priority-ordered rule list. `matching/report.py`'s
-`EXCEPTION_PRIORITY` is architecturally the same shape (first-matching
--candidate-in-priority-order wins) but had never been proven exhaustively
+coverage proof (`test_exception_priority_coverage.py`, new)**.
+`matching/report.py`'s `EXCEPTION_PRIORITY` is a first-matching
+-candidate-in-priority-order rule list, exactly the shape that benefits
+from an exhaustive combinatorial proof (enumerate every reachable signal
+combination and confirm each resolves via the priority list) rather than
+trusting hand-picked test cases — but it had never been proven exhaustively
 against its own real signal space — only trusted by construction and the
 curated dataset's own coverage.
 
@@ -1818,13 +1812,11 @@ used to be informational only; **it is now `apply_gate()`'s 7th condition**
 — a fabricated/unrecognized citation blocks `auto_resolve` outright, not
 merely a human-visible flag on an otherwise-successful auto-resolve.
 
-**Why the change**: sharpened by checking a peer Razorpay buildathon repo
-(`flare19/payment-reconciliation-agent-platform`) past its README into its
-actual `apps/api/src/services/agent/grounding-gate.ts` — its citation check
-is a hard block, with a stated design rationale worth taking seriously: "a
-gate that fails open is worse than no gate, because it produces
-confident-looking output that nobody re-checks." Verified before adopting
-it, not assumed: only `deemed_success_ambiguous` can ever reach agent-gate
+**Why the change**: a citation check that only flags rather than blocks
+fails open — a fabricated or unrecognized citation would still produce a
+confident-looking auto-resolve that nobody re-checks, exactly the failure
+mode a gate exists to prevent. Verified before making the check a hard
+block, not assumed: only `deemed_success_ambiguous` can ever reach agent-gate
 auto-resolve at all (the allowlist's one entry, capped at ₹5,000), so the
 change's blast radius is narrow by construction — it can never affect the
 other 616 escalated cases, which already escalate on the matcher-type
@@ -1867,33 +1859,29 @@ a proposal exists.
 
 **Root-cause explanation-faithfulness check (`agent/evidence.py`'s
 `check_root_cause_contradiction()`), informational only, not yet a gate
-condition.** Idea sharpened by checking a peer Razorpay buildathon repo
-(`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into its
-actual `src/agent/explanation_validator.py`, which rejects an LLM
-explanation using language that contradicts its own verified status (a
-"MATCH" explanation must not say "review"/"rejected"). This project had no
-equivalent — `agent/gate.py`'s citation/policy-ID checks verify the
+condition.** `agent/gate.py`'s citation/policy-ID checks verify the
 STRUCTURED fields (`exception_type`, `policy_id`, `evidence_used`) are
 grounded, but nothing checked whether the agent's own free-text
 `root_cause` — the field a human reviewer actually reads in
-`DetailPanel.tsx` — could contradict the decision the gate reaches.
+`DetailPanel.tsx` — could contradict the decision the gate reaches. Fixed
+by rejecting an explanation whose language contradicts its own decision
+(e.g. an auto-resolving case whose `root_cause` text reads like an escalation).
 
-**A naive port of the peer's word list does NOT transfer cleanly to this
+**A naive single-word contradiction list does NOT transfer cleanly to this
 project's domain, checked before assuming otherwise.** `build_evidence()`
 shows the model real `match_status`/`match_pass` fields, so real
 `root_cause` text routinely and legitimately contains "matched" (e.g.
 `"Match status is 'matched (via pass: exact)'"` — a genuine string pulled
 from a real auto-resolved case). A short single-word contradiction list
-(their `{"matched", "approved", "settled"}`) would false-positive
-constantly on this project's own evidence vocabulary, not on genuine
-decision-contradicting language. Phrase lists were built deliberately
-multi-word and decision-level instead (`"fully resolved"`, `"no further
-action needed"` for an escalating case; `"requires manual review"`,
-`"cannot be automatically resolved"` for an auto-resolving one) and
-**verified against every real root_cause in `data/audit_log.jsonl` and
-`data/investigation_log.jsonl` (1,018 real entries spanning both
-`escalate` and `auto_resolve`) before being adopted: zero false
-positives.**
+(`{"matched", "approved", "settled"}`) would false-positive constantly on
+this project's own evidence vocabulary, not on genuine decision-contradicting
+language. Phrase lists were built deliberately multi-word and decision-level
+instead (`"fully resolved"`, `"no further action needed"` for an escalating
+case; `"requires manual review"`, `"cannot be automatically resolved"` for
+an auto-resolving one) and **verified against every real root_cause in
+`data/audit_log.jsonl` and `data/investigation_log.jsonl` (1,018 real
+entries spanning both `escalate` and `auto_resolve`) before being
+adopted: zero false positives.**
 
 Wired into `apply_gate()` as two new dict fields
 (`root_cause_contradiction_flags`, `root_cause_consistent`), computed
@@ -1930,28 +1918,25 @@ database or the case-detail API yet).
 **Internal-jargon leakage guard for `drafted_communication`
 (`agent/evidence.py`'s `check_communication_leakage()`)**, informational
 only, wired into `run_investigator.py`'s trace output as a `[WARN]` line.
-Idea sharpened by checking a peer Razorpay buildathon repo
-(`kanikakataria75-ship-it/prahari-ai`) past its README into its actual
-`backend/src/sentinel/llm/validators.py`, which rejects a chargeback-
-rebuttal draft that leaks internal decision-state vocabulary ("win
-probability", "confidence score", "policy gate") into a document meant for
-an external card-issuer contact. This project has the same shape of risk
-but hadn't checked for it: `investigator/ollama_client.py`'s own prompt
-describes `drafted_communication` as "a ready-to-send draft" for
-"contacting the bank or treasury ops" — genuinely external-facing text,
-unlike `root_cause`/`evidence_used`, which stay inside this system.
+`drafted_communication` is genuinely external-facing text —
+`investigator/ollama_client.py`'s own prompt describes it as "a
+ready-to-send draft" for "contacting the bank or treasury ops" — unlike
+`root_cause`/`evidence_used`, which stay inside this system, so it carries
+a real risk this project hadn't checked for: leaking internal
+decision-state vocabulary ("confidence score", "policy gate") into a
+document meant for an external contact.
 
 **Not hypothetical, checked before building anything.** Swept all 211
 real non-null `drafted_communication` values in
 `data/investigation_log.jsonl` first: 55 already cite a raw `POLICY-###`
 id, and `trn-000098`'s real draft literally reads *"Escalate for refund
 per POLICY-009. No auto-resolution permitted."* — exactly the leakage
-class the peer's guard exists to catch, already present in this
-project's own generated data, not a theoretical risk. Running the
-shipped check against the same 211 real drafts: **61 (28.9%) flagged.**
+class this guard exists to catch, already present in this project's own
+generated data, not a theoretical risk. Running the shipped check against
+the same 211 real drafts: **61 (28.9%) flagged.**
 
-**A naive port of the peer's substring-only approach would have
-self-inflicted false positives, caught before shipping, not after.**
+**A naive substring-only approach would have self-inflicted false
+positives, caught before shipping, not after.**
 Checked `"gate"` as a standalone word first: zero real drafts contain it,
 but a plain substring check would have hit 9 of 211 anyway — every one a
 false match inside `"investigate"`/`"gateway"`, both of which appear
@@ -1969,32 +1954,30 @@ supplementary context a human reviews before actually sending anything,
 never auto-dispatched by this codebase.
 
 **Machine-readable AI-governance declaration (`agent_manifest.json`, new,
-repo root)**. Idea sharpened by checking a peer Razorpay buildathon repo
-(`niy-ati/recon-engine`) past its README into its actual
-`agent_manifest.json` — a structured file stating exactly what its agent
+repo root)** — a structured file stating exactly what the agent
 reads/writes, every action it can and can't take, and what a human can
-revoke, described in their own README as "a real file, not a policy doc."
-This project already had every one of those facts true and enforced in
-code (the allowlist, the seven gate conditions, the append-only audit
-log, the hash chain) — but scattered across this file's prose and several
-modules' own docstrings, with no single artifact a judge or auditor could
-open and read in isolation without already knowing where to look.
+revoke. This project already had every one of those facts true and
+enforced in code (the allowlist, the seven gate conditions, the
+append-only audit log, the hash chain) — but scattered across this file's
+prose and several modules' own docstrings, with no single artifact a
+judge or auditor could open and read in isolation without already knowing
+where to look.
 
-Built our own, same shape, populated only with claims already verified
-elsewhere in this file — nothing new asserted, just consolidated and made
-machine-readable. `data_access.never_reads_or_writes` states the ground-
-truth-isolation rule explicitly (already enforced by
-`test_ground_truth_isolation.py`); `actions.will_never_do` states the
-authority-boundary rule from `agent/gate.py`'s own docstring (matcher's
-exception_type stays authoritative regardless of reclassification) and
-the frozen-original-proposal rule from `seed_review_queue.py`;
+Populated only with claims already verified elsewhere in this file —
+nothing new asserted, just consolidated and made machine-readable.
+`data_access.never_reads_or_writes` states the ground-truth-isolation
+rule explicitly (already enforced by `test_ground_truth_isolation.py`);
+`actions.will_never_do` states the authority-boundary rule from
+`agent/gate.py`'s own docstring (matcher's exception_type stays
+authoritative regardless of reclassification) and the frozen
+-original-proposal rule from `seed_review_queue.py`;
 `validation.informational_checks_not_yet_gating` names the two checks
 added just above by their real name and honestly states they haven't
-been promoted to hard gate conditions yet, mirroring the same "be precise
-about what's actually verified vs. written-but-untested" discipline the
-peer's own manifest used for its unverified provider paths. Purely a
-documentation/transparency artifact — no code path reads this file, so
-it carries zero runtime risk; verified only that it's well-formed JSON.
+been promoted to hard gate conditions yet, matching this file's own "be
+precise about what's actually verified vs. written-but-untested"
+discipline throughout. Purely a documentation/transparency artifact — no
+code path reads this file, so it carries zero runtime risk; verified only
+that it's well-formed JSON.
 
 **`policy_kb.py` grounded in real RBI/NPCI regulatory frameworks**, not
 invented text — added after checking each claim against actual circulars/
@@ -2046,18 +2029,15 @@ row was tampered with. This is preventive: Postgres itself now rejects
 the `UPDATE`/`DELETE` this project's own code already promised never to
 issue, rather than only the code promising it.
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(`soumyakumari0205-svg/AI-Finance-Controller`) past its README into its
-actual `migrations/003_rls_audit_immutability.sql`, which `REVOKE`s
-`UPDATE`/`DELETE` on its own audit table and backs it with Row-Level
-Security. **Verified before porting it, not assumed to transfer
-directly — and it would NOT have, unmodified.** `review_app` (this
-project's own `POSTGRES_USER`) is a Postgres superuser, and superusers
-bypass both `REVOKE` and RLS by Postgres's own design, `FORCE ROW LEVEL
-SECURITY` included. A naive copy of the peer's migration would have
-installed a control that looks real — the SQL runs cleanly, the policies
-exist — while doing nothing at all, since the app already connects as a
-role the control can't bind.
+**Checked before building, not assumed to work by default.** A `REVOKE`
+of `UPDATE`/`DELETE` plus Row-Level Security on the `reviews` table looks
+like the obvious way to enforce this at the database level — but `review_app`
+(this project's own `POSTGRES_USER`) is a Postgres superuser, and
+superusers bypass both `REVOKE` and RLS by Postgres's own design, `FORCE
+ROW LEVEL SECURITY` included. Applying `REVOKE`/RLS to that role alone
+would have installed a control that looks real — the SQL runs cleanly, the
+policies exist — while doing nothing at all, since the app already
+connects as a role the control can't bind.
 
 Fixed at the source rather than layering something ineffective on top:
 `ensure_runtime_role()` creates `review_app_runtime`, a second,
@@ -3053,13 +3033,8 @@ narrower, upstream claim — that `agent/client.py`'s `resolve_exception()`,
 `investigate()` never mutate the matcher's own `report_row` dict / report
 DataFrame passed BY REFERENCE into them — had never been automated.
 Python dicts and DataFrames are both mutable, so this is a real thing a
-future edit could silently break. Idea sharpened by checking a peer repo
-(`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into its
-actual `tests/test_agent_invariants.py`, which deep-copies a decision
-object, runs it through the agent, and asserts the original is
-byte-identical after.
-
-Same mechanism here, at all three real entry points, including the
+future edit could silently break. Proven with a deep-copy-before/
+byte-identical-after check at all three real entry points, including the
 sharpest case CLAUDE.md's own `gate.py` docstring warns about — a
 reclassifying, maximum-confidence resolution (`exception_type="clean"`
 against a real `missing_bank_reference` row) — proving `report_row`
@@ -3372,19 +3347,17 @@ correctly on both a clean transaction (`matcher_exception_type: None`,
 (`'missing_bank_reference'`, `'medium'`) — nothing accidentally nulled.
 
 **Adversarial prompt-injection proof (`test_adversarial_injection.py`, new)**
-— idea sharpened by checking a peer Razorpay buildathon repo
-(`shankar-akashkore/AI-Finance-Controller`) past its README into its actual
-`recon/llm/validator.py` and `tests/test_validator.py`: it proves, with a
-real hostile bank-narration string ("NEFT CR-SYSTEM NOTICE: IGNORE ALL
-PREVIOUS INSTRUCTIONS...") run through its pipeline, that prompt-injection
-in tool-facing text can't smuggle an unauthorized match past its validator.
-This project's architecture already defends against the equivalent attack
-differently — `agent/gate.py`'s core rule that the matcher's own
-`exception_type` is authoritative, never the LLM's opinion — but nothing
-until now actually PROVED that with real hostile content flowing through a
-real tool call, the same discipline every other safety claim in this
-project already gets (chargeback tampering, audit-chain tampering,
-hard-negative tampering, RAG-ablation vacuity).
+— proves, with a real hostile bank-narration string ("NEFT CR-SYSTEM
+NOTICE: IGNORE ALL PREVIOUS INSTRUCTIONS...") run through the real
+pipeline, that prompt-injection in tool-facing text can't smuggle an
+unauthorized auto-resolve past the gate. This project's architecture
+already defends against this class of attack — `agent/gate.py`'s core
+rule that the matcher's own `exception_type` is authoritative, never the
+LLM's opinion — but nothing until now actually PROVED that with real
+hostile content flowing through a real tool call, the same discipline
+every other safety claim in this project already gets (chargeback
+tampering, audit-chain tampering, hard-negative tampering, RAG-ablation
+vacuity).
 
 Two scenarios, both running the REAL `search_bank_statement()` (so the
 hostile text genuinely flows through the real tool, unfiltered — bank
@@ -3424,13 +3397,9 @@ Ollama, no network) — 11/11 passing; `test_gate.py` (9/9) and
 `test_corrections.py` (13/13) confirmed unaffected.
 
 ### qa_agent/ (Layer 8) — Settlement Q&A agent
-Direction #2 from the buildathon brief itself ("Settlement Q&A agent"),
-built after a wide external-repo scan of ~175 of the ~207 other
-submissions to this same track turned up two ideas confirmed genuinely
-implemented (not just described) and worth building: this one, and a
-second ("adversarial self-audit LLM tier") not yet built. Additive to
-everything else in this project, not a replacement for anything — same
-relationship investigator/ has to agent/client.py.
+Direction #2 from the buildathon brief itself ("Settlement Q&A agent").
+Additive to everything else in this project, not a replacement for
+anything — same relationship investigator/ has to agent/client.py.
 
 **What it answers, and what it doesn't.** investigator/ answers "what
 should happen to THIS ONE escalated case." qa_agent/ answers a free-text
@@ -3479,12 +3448,9 @@ as `cash_position.config`'s own reconciliation-tie check (flat ₹1 floor OR
 0.5% relative, whichever is larger — deliberately reused rather than
 invented fresh). An ungrounded number gets a visible warning appended to
 the answer, never silently dropped — same "flag, don't hide" discipline
-as `agent/evidence.py`'s `unknown_evidence_citations`. Idea sharpened by
-kosh-ai-finance-controller (a peer buildathon repo, found during the
-external-scan pass): its README described rejecting a Q&A answer
-containing an amount not in the underlying records; this implements the
-equivalent check informationally rather than as a hard block, consistent
-with how this project treats every other citation-validation case.
+as `agent/evidence.py`'s `unknown_evidence_citations`. Implemented as an
+informational check rather than a hard block, consistent with how this
+project treats every other citation-validation case.
 
 **A real bug found live, not in a unit test — the discipline holding up
 on brand-new code the same way it did across eleven external review
@@ -3645,15 +3611,12 @@ than inventing a new one.
     python scripts/run_qa.py "What's driving the review queue backlog?"
 
 ### journal_entries.py (repo root) -- deterministic double-entry drafting
-"Run the books," from the buildathon brief itself, taken literally.
-Idea sharpened by a second external repo scan pass (Ledgermind-AI, a peer
-buildathon submission): its README described an LLM drafting proposed GL
-journal entries per exception type. This project's own "AI proposes,
-deterministic code disposes" rule pushed that one step further rather
-than importing it as-is: the accounting TREATMENT for a given
-exception_type is fixed, standard practice, not a case-by-case judgment
-call an LLM needs to make, so there's nothing here for an LLM to usefully
-decide. Zero LLM calls, zero latency, zero network dependency -- unlike
+"Run the books," from the buildathon brief itself, taken literally. This
+project's own "AI proposes, deterministic code disposes" rule applies
+here too: the accounting TREATMENT for a given exception_type is fixed,
+standard practice, not a case-by-case judgment call an LLM needs to make,
+so there's nothing here for an LLM to usefully decide. Zero LLM calls,
+zero latency, zero network dependency -- unlike
 `qa_agent/`'s multi-second Ollama round trips, this is available
 instantly for every single case, computed entirely from fields
 `matching/report.py` already produced (`observed_net_rupees`,
@@ -4306,11 +4269,8 @@ embeddings turned out to be the wrong tool.
   directly rather than a second hand-copied read -- the SAME sanctioned
   reader, reused, not a second one), only for scoring. `test_ground_truth
   _isolation.py` proves this holds in the real code via a static comment
-  -stripped scan, rather than trusting the discipline alone -- idea
-  sharpened by checking a peer buildathon repo
-  (flare19/payment-reconciliation-agent-platform) past its README into its
-  actual `truth-leak-guard.test.ts`. Building it surfaced the
-  `run_baseline_naive.py` fact above, previously undocumented.
+  -stripped scan, rather than trusting the discipline alone. Building it
+  surfaced the `run_baseline_naive.py` fact above, previously undocumented.
 - **The deterministic core never imports the AI layer.** `matching/`,
   `cash_position/`, and `ingestion/` compute financial facts; none of them
   may depend on `agent/`, `investigator/`, or `qa_agent/` — the direction
@@ -4318,13 +4278,8 @@ embeddings turned out to be the wrong tool.
   never been tested as a real property of the code. `test_architecture
   _boundary.py` proves it two ways (a static AST scan, plus a subprocess
   runtime check that importing the core never actually loads the agent
-  package or a provider SDK), idea sharpened by checking a peer buildathon
-  repo (`SuryaSK-dev/razorpay-ai-finance-controller`) past its README into
-  its own `test_architecture_boundary.py` — its version found and closed a
-  real gap in its own project (only a narrow check on one reporting
-  script existed, not the modules that actually compute financial
-  outcomes). Verified this project's own core was already clean before
-  writing the test (zero exemptions needed, unlike the peer's one), and
+  package or a provider SDK). Verified this project's own core was already
+  clean before writing the test (zero exemptions needed), and
   verified the test itself is non-vacuous with a real tamper test: a
   temporarily-injected `import agent.config` into `matching/report.py`
   was caught at the exact line and module name, then the file was
@@ -4338,14 +4293,13 @@ embeddings turned out to be the wrong tool.
   one-time, hand-verified claim (see the `cash_position/` review pass:
   "`DEFAULT_AS_OF` verified to never be shadowed by `datetime.date.today()`
   anywhere in the actual demo path"), not a standing guard.
-  `test_deterministic_core_purity.py` closes that gap, idea sharpened by
-  checking a peer buildathon repo (`ShauryaBansal01/Kosh`) past its
-  README into its actual `tests/invariants/no-io-in-domain.test.ts` —
-  deliberately narrower than its own "no I/O at all" rule, since this
-  project's `matching/loaders.py` legitimately reads CSV files itself and
-  a blanket I/O ban would be false for real, sanctioned code; what
-  actually threatens reproducibility is specifically the clock,
-  unseeded randomness, and env-var-driven config drift. Verified
+  `test_deterministic_core_purity.py` closes that gap — a static scan for
+  wall-clock reads, unseeded randomness, and direct env-var access across
+  the deterministic core, deliberately narrower than a blanket "no I/O at
+  all" rule would be, since `matching/loaders.py` legitimately reads CSV
+  files itself and a blanket I/O ban would be false for real, sanctioned
+  code; what actually threatens reproducibility is specifically the
+  clock, unseeded randomness, and env-var-driven config drift. Verified
   non-vacuous with a real tamper test the same way as the boundary test
   above.
 - **The AI's original proposal is immutable.** `seed_review_queue.py`

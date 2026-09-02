@@ -29,11 +29,10 @@ inversion a financial control boundary must not allow.
       - amount at risk < risk ceiling
       - every evidence_used citation resolves to something the agent was
         actually shown (a real EVIDENCE-N field or a real TOOL-N call) --
-        added after checking a peer repo's harder stance
-        (flare19/payment-reconciliation-agent-platform's grounding-gate.ts:
+        a citation check that only flags rather than blocks fails open:
         "a gate that fails open is worse than no gate, because it produces
-        confident-looking output that nobody re-checks") and verifying it
-        against this project's own real data: 0 of 18 recorded auto_resolve
+        confident-looking output that nobody re-checks." Verified before
+        making this a hard condition, not assumed: 0 of 18 recorded auto_resolve
         investigations would have flipped under this condition -- every
         real citation on record is already genuine, so this is a
         forward-looking tightening, not a regression. A fabricated

@@ -56,13 +56,10 @@ EVIDENCE_LABEL_TO_FIELD = {
 
 
 # Explanation-faithfulness check: does the model's own free-text root_cause
-# contradict the decision the gate actually reached? Idea sharpened by
-# checking a peer Razorpay buildathon repo (SuryaSK-dev/razorpay-ai-finance-
-# controller) past its README into its actual src/agent/explanation_validator.py,
-# which rejects an LLM explanation that uses language contradicting its own
-# verified status (e.g. a "MATCH" explanation that says "review"/"rejected").
+# contradict the decision the gate actually reached? (e.g. an auto-resolving
+# case whose root_cause text reads like an escalation, or vice versa).
 #
-# A naive port of that word list does NOT transfer cleanly to this project's
+# A naive single-word contradiction list does NOT transfer cleanly to this project's
 # domain: build_evidence() shows the model real fields named match_status/
 # match_pass, so real root_cause text routinely and legitimately contains
 # "matched" (e.g. "Match status is 'matched (via pass: exact)'") -- a short
@@ -107,14 +104,10 @@ def check_root_cause_contradiction(root_cause: str, gate_decision: str) -> list[
 # "a ready-to-send draft" (investigator/ollama_client.py's own prompt
 # wording) for contacting the bank or treasury ops, i.e. genuinely external-
 # facing text, unlike root_cause/evidence_used which stay inside this
-# system. Idea sharpened by checking a peer Razorpay buildathon repo
-# (kanikakataria75-ship-it/prahari-ai) past its README into its actual
-# backend/src/sentinel/llm/validators.py, which rejects a chargeback-
-# rebuttal draft containing internal-decision-state vocabulary ("win
-# probability", "confidence score", "policy gate") on the reasoning that a
-# document sent to an external financial-institution contact must never
-# expose the machinery that produced it -- a fluent draft that leaks
-# internal state looks unprofessional at best and confusing at worst to a
+# system. A document sent to an external financial-institution contact
+# must never expose the machinery that produced it -- a fluent draft that
+# leaks internal decision-state vocabulary ("confidence score", "policy
+# gate") looks unprofessional at best and confusing at worst to a
 # recipient who has no idea what "POLICY-009" or "risk_class" means.
 #
 # Checked against every real drafted_communication in data/investigation_log.jsonl

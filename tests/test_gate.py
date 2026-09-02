@@ -166,11 +166,10 @@ def test_missing_amount_fields_treated_as_zero_not_a_crash():
 
 
 def test_root_cause_contradiction_flagged_informationally_not_gating():
-    """Idea sharpened by checking a peer Razorpay buildathon repo
-    (SuryaSK-dev/razorpay-ai-finance-controller) past its README into its
-    actual src/agent/explanation_validator.py, which rejects an LLM
-    explanation using language that contradicts its own verified status.
-    Verified against every real root_cause in data/audit_log.jsonl and
+    """Proves the model's own free-text root_cause is checked for language
+    that contradicts its own decision (e.g. an auto-resolving case whose
+    text reads like an escalation). Verified against every real root_cause
+    in data/audit_log.jsonl and
     data/investigation_log.jsonl (1,018 entries) before adopting the
     phrase lists: zero false positives. This test proves the flag fires
     on genuinely contradicting text, and -- critically -- that it never
@@ -208,12 +207,10 @@ def test_root_cause_consistent_on_normal_text():
 
 
 def test_communication_leakage_catches_real_observed_leak():
-    """Idea sharpened by checking a peer Razorpay buildathon repo
-    (kanikakataria75-ship-it/prahari-ai) past its README into its actual
-    backend/src/sentinel/llm/validators.py, which rejects a chargeback-
-    rebuttal draft leaking internal decision-state vocabulary. This isn't
-    a hypothetical scenario for this project either -- this exact string
-    (trimmed) is a REAL drafted_communication already sitting in
+    """Proves the internal-jargon leakage guard catches a genuine leak of
+    internal decision-state vocabulary into an external-facing draft, not
+    just a synthetic example: this exact string (trimmed) is a REAL
+    drafted_communication already sitting in
     data/investigation_log.jsonl for trn-000098, found by scanning all 211
     real non-null drafts before building this check."""
     leaks = check_communication_leakage(

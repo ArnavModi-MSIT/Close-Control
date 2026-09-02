@@ -3,14 +3,11 @@ Ground-truth isolation guard: proves this project's own stated working
 principle ("Ground truth is sacred... Only evaluate.py touches it") holds
 in the actual code, instead of relying on manual discipline alone.
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(flare19/payment-reconciliation-agent-platform) past its README, into its
-actual tests/unit/truth-leak-guard.test.ts -- a static-scan test enforcing
-their own ADR-021 ("ground truth never enters the engine") by scanning
-every source file for a forbidden reference. This project has stated the
-identical rule since its own first working principle, but until now never
-had an automated proof of it -- only the discipline of every module's own
-docstring saying "never reads ground_truth.csv."
+This project has stated the identical rule since its own first working
+principle, but until now never had an automated proof of it -- only the
+discipline of every module's own docstring saying "never reads
+ground_truth.csv." This guard closes that gap with a static-scan test
+that scans every source file for a forbidden reference.
 
 Building this guard surfaced one real, previously-undocumented fact: the
 project's rule as stated ("only evaluate.py") was technically imprecise --
@@ -112,10 +109,8 @@ def strip_comments_and_docstrings(source: str) -> str:
     """Crude but sufficient state-machine stripping: removes '#' line
     comments and triple-quoted strings (the vast majority of which are
     docstrings in this codebase), while leaving real code -- including
-    ordinary single/double-quoted string literals -- untouched. Mirrors
-    the peer repo's own stripComments() intent ("remove comments while
-    preserving string and template literals") adapted for Python's
-    comment/docstring syntax rather than JS's."""
+    ordinary single/double-quoted string literals -- untouched, so a
+    forbidden reference mentioned only in prose doesn't trip the guard."""
     out = []
     i = 0
     n = len(source)

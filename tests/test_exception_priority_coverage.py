@@ -5,16 +5,12 @@ timing signal), the REAL build_report() function resolves to a defined
 exception type whenever at least one signal fired, and that type is exactly
 the highest-priority one present -- never a silent fallthrough to "clean."
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(SuryaSK-dev/razorpay-ai-finance-controller) past its README into its
-actual tests/test_decision_table.py -- it exhaustively enumerates all 2,048
-combinations of its own decision context and proves every one resolves via
-its priority-ordered rule list, with a catch-all rule that should never
-actually fire in production. This project's EXCEPTION_PRIORITY
-(matching/report.py) is architecturally the same shape (first-matching
--candidate-in-priority-order wins) but had never been proven exhaustively
-against its own real signal space -- only trusted by construction and by
-the curated dataset's own coverage.
+This project's EXCEPTION_PRIORITY (matching/report.py) is a
+first-matching-candidate-in-priority-order rule list -- exactly the shape
+that benefits from an exhaustive combinatorial proof rather than
+hand-picked test cases -- but had never been proven exhaustively against
+its own real signal space -- only trusted by construction and by the
+curated dataset's own coverage.
 
 BUILDING THIS TEST FOUND A REAL BUG, immediately, before the test even
 finished being written: "no_gateway_record_found" (matching/ledger_check.py's

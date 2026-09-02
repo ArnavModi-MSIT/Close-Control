@@ -11,13 +11,10 @@ itself after the fact, the same way agent/evidence.py's
 validate_evidence_citations() checks a citation list after the fact
 rather than constraining generation directly.
 
-Idea sharpened by an external repo scan (kosh-ai-finance-controller, a
-peer buildathon submission): its README described rejecting any Q&A
-answer containing an amount not found in the underlying records. This
-module does the equivalent check, but informationally (surfaced to the
-reviewer, same as unknown_evidence_citations) rather than as a hard
-reject -- consistent with this project's "escalate/flag, don't silently
-drop" discipline elsewhere.
+Implemented informationally (surfaced to the reviewer, same as
+unknown_evidence_citations) rather than as a hard reject -- consistent
+with this project's "escalate/flag, don't silently drop" discipline
+elsewhere.
 """
 
 import re

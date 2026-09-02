@@ -1,12 +1,10 @@
 """Deterministic double-entry journal-entry drafting -- "run the books,"
 taken literally, on top of matching/'s already-computed reconciliation
-report. Idea sharpened by an external repo scan (Ledgermind-AI, a peer
-buildathon submission): its README described an LLM drafting proposed
-GL journal entries per exception type; this project's own "AI proposes,
-deterministic code disposes" rule pushes that further -- the accounting
-TREATMENT for a given exception_type is fixed, known, standard practice,
-not a case-by-case judgment call, so there is nothing here for an LLM to
-usefully decide. Every line, every account, every rupee figure is plain
+report. This project's own "AI proposes, deterministic code disposes"
+rule applies here too -- the accounting TREATMENT for a given
+exception_type is fixed, known, standard practice, not a case-by-case
+judgment call, so there is nothing here for an LLM to usefully decide.
+Every line, every account, every rupee figure is plain
 Python over fields matching/report.py already computed. No LLM call, no
 network dependency, no latency -- available instantly for every case,
 unlike qa_agent/'s multi-second Ollama round trips.

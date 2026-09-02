@@ -17,13 +17,9 @@ silently break (a future edit that does `report_row["final_exception_type"]
 = ...` instead of building a new object, or a tool that assigns into
 ctx.report in place) without any existing test catching it.
 
-Idea sharpened by checking a peer Razorpay buildathon repo
-(SuryaSK-dev/razorpay-ai-finance-controller) past its README into its
-actual tests/test_agent_invariants.py -- it deep-copies a MatchDecision,
-runs it through the agent's explain() step, and asserts the original is
-byte-identical after, proving the agent layer is purely additive. Same
-mechanism, applied here to this project's own three real entry points
-where a report_row/report DataFrame crosses into AI-layer code.
+Proven with a deep-copy-before/byte-identical-after check, applied here
+to this project's own three real entry points where a report_row/report
+DataFrame crosses into AI-layer code.
 
     python tests/test_agent_immutability.py
 """
