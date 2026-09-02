@@ -94,7 +94,7 @@ export function CaseTable({ items, selected, onSelect }: Props) {
                   )}
                   {c.status === "auto_resolved" && (
                     <Badge tone="accent" label="AUTO"
-                      title="The AI proposed a resolution; the deterministic gate's seven conditions all held, so the system auto-resolved it -- no human input yet" />
+                      title="The AI proposed a resolution; the deterministic gate's conditions all held, so the system auto-resolved it -- no human input yet" />
                   )}
                   {c.status === "auto_closed" && (
                     <Badge tone="good" label="RE-VERIFIED"
