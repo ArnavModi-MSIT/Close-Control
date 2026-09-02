@@ -26,6 +26,13 @@ what the exception is.
 
 ---
 
+## Demo video
+
+[**Watch the overview**](media/overview.mp4) — a walkthrough of the
+pipeline, the review queue, and the AI tools described below.
+
+---
+
 ## Architecture
 
 ```
