@@ -53,3 +53,11 @@ OVERAGE_TOLERANCE_MAX_FRACTION = 1.15
 
 # ambiguity: two+ candidates within this fraction of each other are indistinguishable
 AMBIGUITY_RELATIVE_DELTA = 0.02  # 2%
+
+# Benford's Law first-digit test (matching/diagnostics.py): Nigrini's own
+# guidance is to avoid this test on small samples -- a handful of rows can
+# look "nonconforming" by pure chance with no real signal behind it. 100 is
+# a commonly-cited practical floor for the first-digit (9-category) test;
+# below it, benford_first_digit_analysis() skips the group entirely rather
+# than reporting a verdict that isn't statistically meaningful.
+BENFORD_MIN_SAMPLE_SIZE = 100

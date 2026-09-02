@@ -571,6 +571,27 @@ not a bug. See §7 Layer 7 for the mechanism.
   as of that snapshot (by design). Reconciliation-bridge variance
   −₹14,390.63 (0.133%), classified EXPLAINED RESIDUAL; bank-side partition
   still reports zero unexplained rows.
+- **Live review-queue state has moved on from the pristine all-pending
+  snapshot most of §7's historical verification notes recorded** (those
+  notes were accurate when written and are deliberately left as-is — they
+  are a record of what was verified when, not a current-state table). As
+  of the 2026-09-02 full-repo audit the real demo database holds:
+  **569 pending, 2 pending_manager_approval, 37 approved, 1 overridden,
+  8 auto_resolved, 0 escalated, 0 auto_closed** — still summing to exactly
+  617, verified (no case lost or duplicated). These are genuine human
+  reviews submitted during demo recording, not drift or corruption. Two
+  consequences worth knowing before a live demo: **`trn-000555` (the case
+  `demo_video_script.md` says to click into) is no longer `pending`** — an
+  analyst approval on 2026-08-31 moved it to `pending_manager_approval`,
+  so it now renders with an "Awaiting manager" badge and one entry in its
+  review history. Its AI proposal, gate checklist, and evidence all still
+  display exactly as scripted. And **`trn-000072` is a strictly better
+  case for the script's own headline gate claim**: it passes 5 of the 6
+  displayed gate conditions and fails ONLY the ₹5,000 amount ceiling
+  (confidence 0.95, policy consistent, sufficient evidence, on the
+  allowlist), whereas `trn-000555` independently fails the allowlist and
+  policy conditions too — so on that case the ceiling is not actually what
+  stops auto-resolution, which is what the narration claims it proves.
 
 ---
 
@@ -1672,6 +1693,131 @@ headline numbers byte-identical to before (confirming both the
 centralization are purely behavior-preserving); `verify_consumption_invariants()`
 and `settlement_conservation_summary()` re-confirmed clean after the
 `blocking.py` change.
+
+**Two new diagnostics (`matching/diagnostics.py`'s `benford_first_digit_analysis()`
+and `optimal_assignment_diagnostic()`, evaluate.py's new sections 1f/1g)**,
+following a competitive scan of peer buildathon submissions that surfaced
+both techniques as real, cheap, and absent from this project. Same
+contract as every other function in this module: purely observational,
+never imported by the matching path, never change a classification,
+`risk_class`, or `auto_resolve_eligible` value.
+
+`benford_first_digit_analysis()` is Nigrini's published first-digit MAD
+conformity test (the standard forensic-accounting threshold table, not an
+invented cutoff), run overall and per merchant so one merchant's
+distribution can be flagged even when the aggregate looks fine. **A real,
+initially alarming-looking result, verified rather than either hidden or
+taken at face value**: on the curated dataset, EVERY merchant (and the
+overall population) scores "nonconformity" (MAD 0.0575, ~3.8x the 0.015
+nonconformity threshold), with digits 1 and 2 together accounting for
+73.5% of leading digits versus Benford's expected 47.7%. Investigated
+rather than assumed to be a diagnostic bug, and **derived in closed form
+rather than only simulated**: `data_generation/utils.py`'s `gross_amount()`
+draws from a 3-tier UNIFORM mixture (Rs.150-3,000 / 3,000-25,000 /
+25,000-2,50,000 at weights .75/.20/.05). A uniform range's mass
+concentrates in its arithmetically-widest decade — **70.2% of tier 1 sits
+in [1,000, 3,000), where the leading digit can only be 1 or 2**, while the
+[300, 1,000) slice that would supply digits 3-9 is thin by comparison.
+Integrating each tier's exact leading-digit mass and weighting by its draw
+probability predicts **1:38.9%, 2:34.7%, 3-9:3.8% each — matching the
+observed distribution to within a few tenths of a point.** A control run
+on genuinely log-spread synthetic data (5 decades) correctly scores close
+conformity (MAD 0.00085), proving the MAD/verdict machinery itself works
+rather than always reporting nonconformity. So this is a real, expected
+property of the generator's tier bounds, not evidence of anomalous data or
+a broken test — Benford's Law describes naturally-occurring, multi-decade
+data, a well-documented caveat this is a textbook instance of.
+`evaluate.py`'s own printed output carries this full derivation inline,
+not just the bare "nonconformity" flag, so a reader never sees an
+alarming-looking number with no context.
+
+**A second real bug, found during a review pass over this same new code
+rather than by a test**: `_leading_digits()`'s first version used
+`.round(6).astype(int)`, which reports Rs.1,99,999.99 as leading digit
+**2** — its mantissa, 1.9999999, rounds up to 2.0 before truncation — when
+the true answer is 1. Genuinely reachable given this dataset's own
+Rs.150-Rs.2,50,000 range, and found by testing against known-answer
+boundary cases rather than assuming the implementation was right. Fixed to
+`np.floor(mantissa + 1e-9)`, which is correct in both directions (the
+epsilon absorbs float division error just BELOW an integer, e.g.
+`0.3/0.1 == 2.9999999999999996`, whose bare floor would be 2 rather than
+3). **Confirmed latent, not live**: zero amounts in the real dataset sit
+within the affected window, so every published figure above is unchanged
+by the fix — verified directly rather than assumed. Pinned by a permanent
+regression test covering all three classes of boundary case.
+
+`optimal_assignment_diagnostic()` measures how often engine.py's greedy,
+processing-order-dependent consumption of bank rows could have chosen
+differently from a globally OPTIMAL assignment (`scipy.optimize.linear_sum_assignment`,
+the Hungarian algorithm, minimizing total amount delta across every
+contested settlement at once) — and, when it could have, whether the
+optimal choice would actually have reduced the total delta or just picked
+a different, equally-valid one. Deliberately scoped to single-bank-row
+matches only (`exact`/`shortage_tolerant`/`overage_tolerant` — the split
+pass matches two rows per settlement, which a 1:1 assignment problem
+doesn't model) and, within that population, to settlements that are
+genuinely CONTESTED: sharing at least one candidate bank row, transitively,
+with another single-row-matched settlement (a connected component over the
+bipartite settlement<->bank-row graph via a plain union-find). A
+settlement whose candidates never overlap anyone else's could not possibly
+have been affected by processing order, so including it would only dilute
+the real disagreement rate with cases where none was structurally
+possible. This directly extends section 1b/1c's existing candidate-overlap
+and consumption-invariant proofs one level further: not just "was
+anything double-consumed" but "even among genuinely contested settlements,
+did greedy's arbitrary processing order ever pick worse than the best
+possible global assignment."
+
+**A real bug found and fixed via the diagnostic's own first real run, not
+a synthetic test** — same discipline as this project's other new-code
+checks. The first version reported `optimal_total_delta_rupees: Rs.0.00`
+against `greedy_total_delta_rupees: Rs.25,371,407.43` on the real
+dataset — an implausible result on its face (158 contested but
+already-successfully-matched settlements cannot have a combined
+~2.5-crore greedy delta) that was caught by not trusting a suspicious
+number instead of reporting it as-is. Root cause: a Python variable
+-scoping bug — `expected` was set inside the cost-matrix-building loop
+(`for i, sid in enumerate(sids): expected = expected_by_sid[sid]`) and
+then silently reused, stale, one loop later when computing each
+settlement's `greedy_cost`, so every settlement's greedy delta was computed
+against the LAST settlement's expected total in its connected component,
+not its own. Fixed by looking up `expected_by_sid[sid]` directly at the
+point of use instead of relying on the leaked loop variable. Verified via
+a hand-worked synthetic scenario built specifically to have a known right
+answer (two settlements, two shared candidate bank rows, a deliberately
+-swapped greedy assignment) before trusting the real-dataset number again:
+confirms the diagnostic both detects the disagreement AND correctly
+measures that the optimal pairing reduces the total delta (Rs.1.00 vs.
+the swapped greedy assignment's Rs.199.00), not just that a different
+pairing exists.
+
+**Real result after the fix: 158 contested settlements across 5 connected
+components, 0 disagreements, both totals Rs.0.00** (correct — these are
+all `exact`-pass matches, so any real delta is already within
+`EXACT_MATCH_TOLERANCE_RUPEES`). On every genuinely contested settlement in
+the curated dataset, greedy's processing-order-dependent choice already
+matches what a globally optimal assignment would have picked — this
+project's own documented Known Limitation ("greedy bank-row consumption is
+order-dependent") stays real and accepted (see `test_ambiguity.py`
+Scenario 7, which proves the mechanism can produce a genuinely
+order-dependent outcome on a constructed adversarial case), but is now
+backed by a measured "not a live risk on THIS dataset" finding for the
+strongest verification technique found across the whole competitive scan,
+not merely the block-level overlap measurement that existed before it.
+
+7 new tests in `tests/test_benford_and_assignment_diagnostics.py`: Benford's
+MAD/verdict machinery proven correct on synthetic data with a known answer
+(log-spread data scores conformity, all-digit-9 data scores nonconformity),
+the minimum-sample-size floor proven to skip rather than guess, leading
+-digit extraction pinned against all three classes of boundary case (the
+round-up bug, float error below an integer, the 9/10 boundary), and the
+real-dataset result pinned as a regression check that fails loudly if a
+future `gross_amount()` change ever made amounts log-uniform; the
+assignment diagnostic proven to report zero on genuinely non-overlapping
+settlements, to both detect and correctly measure a hand-crafted real
+disagreement, and end-to-end against the real dataset.
+`scipy==1.15.3` added to `requirements.txt` as a direct (not merely
+transitive) dependency — `linear_sum_assignment` is the only surface used.
 
 ### agent/run_summary.py + run_summary.py (repo root) -- whole-run narrative summary
 **Whole-run narrative summary** -- an LLM narrates the deterministic

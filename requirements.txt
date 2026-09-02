@@ -5,6 +5,10 @@ pydantic==2.13.3
 python-dotenv==1.2.3
 requests==2.33.1
 
+# matching/diagnostics.py's optimal_assignment_diagnostic() -- Hungarian
+# algorithm (linear_sum_assignment) only, no other scipy surface used.
+scipy==1.15.3
+
 # Optional -- only imported if LLM_PROVIDER=anthropic in .env. Safe to skip
 # if you're only using mock/groq/ollama (see README setup section).
 anthropic==1.0.0
