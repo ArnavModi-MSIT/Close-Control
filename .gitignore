@@ -21,3 +21,5 @@ ui/review-queue-app/dist/
 
 # Local Claude Code tooling state (lock files etc.), not project content.
 .claude/
+
+demo_video_script.md
