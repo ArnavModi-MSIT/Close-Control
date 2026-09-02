@@ -11,7 +11,7 @@ import type { Correction } from "../types";
 // nothing here is reviewable, it's evidence the mechanism is real.
 //
 // Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
-// which one of the six tool panels is shown.
+// which one of the seven tool panels is shown.
 
 function CorrectionRow({ c }: { c: Correction }) {
   return (

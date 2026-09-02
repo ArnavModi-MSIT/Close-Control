@@ -160,6 +160,23 @@ export function useAskQA() {
   });
 }
 
+export function useReverify() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (dryRun: boolean) => api.reverify(dryRun),
+    onSuccess: (data) => {
+      // A dry run (payload.dry_run in the response) never writes anything
+      // server-side -- nothing to invalidate. A real run only actually
+      // changed state if it closed at least one case.
+      if (!data.dry_run && data.closed.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["cases"] });
+        queryClient.invalidateQueries({ queryKey: ["stats"] });
+        queryClient.invalidateQueries({ queryKey: ["root-cause-clusters"] });
+      }
+    },
+  });
+}
+
 export function useSubmitReview(transactionId: string) {
   const queryClient = useQueryClient();
   return useMutation({

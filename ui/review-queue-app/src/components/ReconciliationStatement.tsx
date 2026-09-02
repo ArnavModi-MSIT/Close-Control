@@ -27,7 +27,7 @@ function Subtotal({ label, value }: { label: string; value: number }) {
 }
 
 // Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
-// which one of the six tool panels is shown.
+// which one of the seven tool panels is shown.
 export function ReconciliationStatement() {
   const { data: stmt, isLoading, isError, refetch } = useReconciliationStatement(true);
 

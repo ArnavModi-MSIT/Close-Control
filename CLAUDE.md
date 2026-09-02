@@ -2317,6 +2317,34 @@ ad hoc. Of 13 real routes, exactly 2 had zero frontend caller:
    tooltip explaining what it proves, schema version) — verified live
    against `trn-000001` post-override.
 
+**A fourth instance of the same class of gap, found by re-running this
+exact audit method** (all 14 real routes in `main.py` vs. every fetch call
+in `api.ts`) as a general repo self-check, not triggered by a new feature:
+`POST /api/reverify` (§7's Layer 7 closed-loop re-verification -- Airflow's
+`reverification_dag.py` already called it on a schedule, but no human could
+trigger the same action on demand from the dashboard). Fixed with
+`ReverificationPanel.tsx` (new), the review queue's seventh tool panel
+(`ToolsHub.tsx`) -- a "Preview (dry run)" button shows `checked`/
+`closed`/`changed_exception`/`still_open` counts and the reclassified-case
+list without writing anything, and a "Confirm & close N cases" button only
+renders once a preview found real closure candidates (`preview.closed.length
+> 0`) -- mirrors this project's existing preview-then-confirm discipline
+(the bulk-review dialog) rather than letting one click both compute and
+commit. `useReverify()`'s `onSuccess` only invalidates `cases`/`stats`/
+`root-cause-clusters` when a REAL (non-dry-run) call actually closed
+something -- a dry run, and a real run that closes zero cases, correctly
+leave the query cache untouched. Verified live against the real 617-case
+demo database: a dry-run preview correctly reported `checked: 571, closed:
+0, changed_exception: 0, still_open: 571` (matching the dashboard's own
+"571 NEEDS A HUMAN" figure exactly) and a follow-up `GET /api/stats` call
+confirmed `counts_by_status` was byte-identical before and after --
+proving the preview truly never wrote anything, not just trusting the
+button's own label. Zero closures is the correct, expected result against
+the static main dataset (see this endpoint's own docstring) -- a real
+closure is only ever observable against `run_stream_simulator.py`'s
+progressively-revealed data, same caveat as Airflow's own scheduled runs.
+`npm run build` clean; `test_review_api.py` (97/97) unaffected.
+
 **Bulk cluster review (`POST /api/cases/bulk-review`, `GET
 /api/root-cause-clusters`)** — the review-side counterpart to
 `matching/root_cause.py`'s clustering: a reviewer who trusts a cluster's

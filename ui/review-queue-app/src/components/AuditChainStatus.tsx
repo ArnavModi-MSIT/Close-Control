@@ -11,7 +11,7 @@ import type { AuditChainRow } from "../types";
 // returned or rendered.
 //
 // Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
-// which one of the six tool panels is shown.
+// which one of the seven tool panels is shown.
 
 const INLINE_CAP = 8;
 

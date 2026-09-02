@@ -229,7 +229,7 @@ function BulkReviewDialog({ cluster, onClose }: { cluster: RootCauseCluster; onC
 }
 
 // Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
-// which one of the six tool panels is shown.
+// which one of the seven tool panels is shown.
 export function RootCauseClusters() {
   const { data, isLoading, isError, refetch } = useRootCauseClusters(true);
   const { data: runSummary } = useRunSummary(true);

@@ -16,7 +16,7 @@ import type { MatcherAutoResolvedItem } from "../types";
 // are -- already, correctly, closed.
 //
 // Header/collapse chrome removed -- see ToolsHub.tsx, which now owns
-// which one of the six tool panels is shown.
+// which one of the seven tool panels is shown.
 
 const TYPE_TABS = ["all", "loan_recovery_deduction", "timing_lag_beyond_t2", "fee_variance"] as const;
 

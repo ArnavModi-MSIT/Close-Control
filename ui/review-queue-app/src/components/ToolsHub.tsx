@@ -5,17 +5,20 @@ import { RootCauseClusters } from "./RootCauseClusters";
 import { MatcherAutoResolved } from "./MatcherAutoResolved";
 import { CorrectionMemory } from "./CorrectionMemory";
 import { AuditChainStatus } from "./AuditChainStatus";
+import { ReverificationPanel } from "./ReverificationPanel";
 
 // Replaces what used to be six full-width collapsible cards stacked
 // vertically -- a reviewer had to scroll past five closed headers to
-// reach the sixth. Same six tools, same components (each stripped of its
-// own collapse chrome -- see the "Header/collapse chrome removed" note
-// atop each), now addressed by a sidebar tab list: exactly one panel
+// reach the sixth. Same idea, same per-panel components (each stripped of
+// its own collapse chrome -- see the "Header/collapse chrome removed"
+// note atop each), now addressed by a sidebar tab list: exactly one panel
 // mounted in the content pane at a time, which is also why each panel's
 // query hooks can now just pass `true` unconditionally for `enabled` --
-// mounting IS the open signal.
+// mounting IS the open signal. A seventh tool (re-verification) joined
+// after an audit found POST /api/reverify had no dashboard caller at all
+// -- Airflow could trigger it, a human never could.
 
-type ToolId = "qa" | "reconciliation" | "root-cause" | "matcher" | "corrections" | "audit";
+type ToolId = "qa" | "reconciliation" | "root-cause" | "matcher" | "corrections" | "audit" | "reverify";
 type Accent = "accent" | "good" | "warn";
 
 const TOOLS: { id: ToolId; label: string; description: string; accent: Accent; Panel: ComponentType }[] = [
@@ -60,6 +63,13 @@ const TOOLS: { id: ToolId; label: string; description: string; accent: Accent; P
     description: "Every review event hash-chained to the one before it.",
     accent: "warn",
     Panel: AuditChainStatus,
+  },
+  {
+    id: "reverify",
+    label: "Closed-Loop Re-Verification",
+    description: "Re-run the matcher on demand and auto-close cases that have since cleared.",
+    accent: "good",
+    Panel: ReverificationPanel,
   },
 ];
 
@@ -123,9 +133,9 @@ export function ToolsHub() {
             <div className="flex min-h-[220px] flex-col items-center justify-center gap-1.5 px-6 py-10 text-center">
               <p className="text-[0.92rem] font-semibold text-ink">Pick a tool on the left</p>
               <p className="max-w-sm text-[0.8rem] text-ink-mute">
-                Six deterministic and AI-assisted views sit behind this queue &mdash; Q&amp;A,
+                Seven deterministic and AI-assisted views sit behind this queue &mdash; Q&amp;A,
                 bank reconciliation, root-cause clustering, matcher auto-resolves, correction
-                memory, and the hash-chained audit trail.
+                memory, the hash-chained audit trail, and on-demand re-verification.
               </p>
             </div>
           )}

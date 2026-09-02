@@ -9,6 +9,7 @@ import type {
   MatcherAutoResolvedResponse,
   QAResult,
   ReconciliationStatement,
+  ReverificationResult,
   ReviewSubmission,
   ReviewSubmissionResult,
   RootCauseClustersResponse,
@@ -122,5 +123,17 @@ export function askQA(question: string): Promise<QAResult> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),
+  });
+}
+
+// dryRun=true previews which cases would auto-close without writing
+// anything -- the same request Airflow's reverification_dag.py sends on a
+// schedule (see review_backend/main.py's POST /api/reverify), now also
+// reachable by a human on demand from the dashboard.
+export function reverify(dryRun: boolean): Promise<ReverificationResult> {
+  return fetchJson(`${API}/reverify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dry_run: dryRun }),
   });
 }

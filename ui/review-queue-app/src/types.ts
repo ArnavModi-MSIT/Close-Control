@@ -490,6 +490,31 @@ export interface BulkReviewResult {
   results: BulkReviewCaseResult[];
 }
 
+// Mirrors POST /api/reverify exactly (review_backend/main.py). Every
+// still-open (pending / pending_manager_approval) case gets bucketed into
+// exactly one of closed / changed_exception / still_open -- see that
+// endpoint's own docstring for why "the original exception is gone" and
+// "no exception at all remains" are deliberately different conditions.
+export interface ReverificationChangedCase {
+  transaction_id: string;
+  original_exception_type: string;
+  current_exception_type: string;
+}
+
+export interface ReverificationSkipped {
+  transaction_id: string;
+  reason: string;
+}
+
+export interface ReverificationResult {
+  checked: number;
+  closed: string[];
+  changed_exception: ReverificationChangedCase[];
+  still_open: string[];
+  skipped: ReverificationSkipped[];
+  dry_run: boolean;
+}
+
 export interface CaseFilters {
   status: CaseStatus | "";
   exception_type: string;
