@@ -3,6 +3,8 @@
     {id:'hero', label:'Start'},
     {id:'architecture', label:'Architecture'},
     {id:'ai', label:'AI layer'},
+    {id:'workflow', label:'Human workflow'},
+    {id:'verification', label:'Proof'},
     {id:'value', label:'Value'},
     {id:'roadmap', label:'Roadmap'}
   ];

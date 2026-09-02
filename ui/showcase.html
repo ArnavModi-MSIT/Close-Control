@@ -263,10 +263,80 @@
   </div>
 </section>
 
-<section id="value" style="background:var(--ground-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+<section id="workflow" style="border-top:1px solid var(--border);">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="eyebrow">03 &middot; Why it matters for Razorpay</span>
+      <span class="eyebrow">03 &middot; After the AI stops</span>
+      <h2>A reconciliation isn't done when it's matched. It's done when it's booked.</h2>
+      <p class="desc">Everything above produces a <i>proposal</i>. What follows is the part that actually closes the loop &mdash; a governed human queue, a tamper-evident trail of who decided what, and real double-entry output. This all runs locally rather than on this page, so it's described here rather than shown. <b>For Razorpay:</b> this is the difference between a matching demo and something an ops team could sit in front of on a Monday morning &mdash; the exception has an owner, the approval has a second signature, and the outcome lands in the books.</p>
+    </div>
+
+    <div class="value-grid">
+      <div class="value-card reveal">
+        <span class="vn">2<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> signatures</span></span>
+        <h4>Tiered human review, not a rubber stamp</h4>
+        <p>All 617 escalations land in a real queue with an explicit state machine. Anything at or above <b>&#8377;50,000 needs two people</b> &mdash; an analyst, then a <i>different</i> manager. Illegal transitions are rejected outright rather than silently accepted, and two reviewers acting on the same case at once is caught by an optimistic-concurrency check instead of one quietly overwriting the other. A human can always override the AI; the AI can never override a human.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">SHA-256</span>
+        <h4>Tamper-evident, and not just by convention</h4>
+        <p>Every review event is hash-chained to the one before it, so deleting or editing any historical decision breaks verification for every decision after it &mdash; the <i>sequence</i> is protected, not just each row. Append-only is enforced by <b>Postgres itself</b>, through a deliberately non-superuser role that has <span class="mono">UPDATE</span> and <span class="mono">DELETE</span> revoked, rather than by the application promising to behave. Each case also carries its own content hash, and every pipeline run writes a manifest pinning the exact input bytes and every threshold in force.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">2,072<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> balanced</span></span>
+        <h4>Double-entry journal output, zero LLM</h4>
+        <p>Every transaction drafts a real journal entry against a small chart of accounts, with the variance routed by exception type &mdash; a Razorpay Capital recovery to a <i>liability</i> account, a chargeback to loss, an unexplained shortfall to suspense rather than to a guess. <b>All 2,072 balance: total debits equal total credits exactly (&#8377;2,06,56,815.99 each).</b> The accounting treatment for a known exception type is standard practice, not a judgment call &mdash; so there is nothing here for a model to decide, and it doesn't.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">T+5</span>
+        <h4>The regulation is enforced, not just cited</h4>
+        <p>RBI's Harmonisation-of-TAT circular sets T+5 business days as the outer resolution bound with &#8377;100/day compensation past it. Each open case carries a real deadline derived from the ledger's own business-day-aware expected settlement date, an overdue count, and accrued exposure &mdash; surfaced as a priority signal for humans. It never changes a case's status or influences the gate. Alongside it sits a full bank-reconciliation bridge from books to bank statement, whose residual variance (<b>0.133%</b>) is reported honestly as an explained remainder instead of being forced to zero.</p>
+      </div>
+    </div>
+
+    <div class="panel reveal" style="margin-top:1.5rem;">
+      <p style="margin-top:0;"><b>Seven more tools sit behind that queue</b>, each answering a question a reviewer actually asks: a grounded Settlement Q&amp;A agent, the bank reconciliation statement, root-cause clusters, the matcher's own auto-resolves, correction memory (a past human override is fed back into future AI prompts as a worked example), audit-chain verification, and on-demand re-verification.</p>
+      <p style="margin-bottom:0;">All of it is one command against a local Postgres &mdash; no cloud account, no API key, and zero LLM calls on the default path: <span class="mono" style="background:var(--ground-2); padding:0.2rem 0.5rem; border-radius:4px; display:inline-block; margin-top:0.3rem;">python scripts/run_demo.py</span></p>
+    </div>
+  </div>
+</section>
+
+<section id="verification" style="background:var(--ground-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">04 &middot; Proof</span>
+      <h2>Every number on this page is reproducible from a clean clone.</h2>
+      <p class="desc">A finance system that can't be checked is just a confident one. The claims above are backed by executable proofs rather than assertions &mdash; including the ones that prove a safeguard is real by <i>deliberately breaking it</i> and confirming the alarm fires. <b>For Razorpay:</b> the interesting question isn't whether a reconciliation engine works on a good day; it's what it does on a bad one, and whether you can tell the difference without reading the source.</p>
+    </div>
+    <div class="value-grid">
+      <div class="value-card reveal">
+        <span class="vn">20<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> test files</span></span>
+        <h4>Including the attacks</h4>
+        <p>A hostile bank narration &mdash; <span class="mono">"IGNORE ALL PREVIOUS INSTRUCTIONS&hellip;"</span> &mdash; is run through the <i>real</i> tool and the <i>real</i> gate, with a stand-in model that <b>fully complies with the attack</b>, proving the system resists it even when the model doesn't. Bank narration is never sanitised, on purpose: scrubbing it would hide a genuine data-quality signal from a human. Three independent gate conditions were each weakened in turn to confirm no single one is load-bearing.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">25<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;"> seeds</span></span>
+        <h4>Reproducibility that found a real bug</h4>
+        <p>Accuracy is re-measured across 25 independently regenerated datasets, not one lucky seed. The first run came back <b>10 of 25 below 100%</b> &mdash; a real generator bug where a payment could settle same-day while still labelled late. Fixed, re-run, <b>0 of 25 below 100%</b>, and a permanent guard added so it reports itself if it ever returns. The single-seed claim it replaced looked clean the whole time.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">0</span>
+        <h4>Architectural rules enforced by tests, not discipline</h4>
+        <p>"The deterministic core never imports the AI layer" is checked by a static scan <i>and</i> a runtime subprocess check, so it can't rot into a comment that used to be true. The same applies to reading the wall clock, unseeded randomness, and env-var drift inside the matcher &mdash; all banned and all tested, which is why the same inputs produce byte-identical output on any machine, any day. Ground truth is readable by the scoring script alone, and a test proves it.</p>
+      </div>
+      <div class="value-card reveal">
+        <span class="vn">1.7<span style="font-size:0.42em; font-weight:600; letter-spacing:0.02em;">ms</span></span>
+        <h4>The matcher doesn't trust itself either</h4>
+        <p>"AI proposes, deterministic code disposes" is usually read as a rule about the model &mdash; but a wrong classification the <i>matcher</i> produced would reach the gate as unquestioned fact. So every run independently re-derives whether any bank row was double-consumed and whether every matched settlement's arithmetic actually closes, and refuses to return a report that fails. Cost: <b>1.72&thinsp;ms</b> per run, measured.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="value" style="border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">05 &middot; Why it matters for Razorpay</span>
       <h2>Throughput a finance team can trust.</h2>
     </div>
     <div class="value-grid">
@@ -292,7 +362,7 @@
 <section id="roadmap" style="border-top:1px solid var(--border);">
   <div class="wrap">
     <div class="sec-head reveal">
-      <span class="eyebrow">04 &middot; What's next</span>
+      <span class="eyebrow">06 &middot; What's next</span>
       <h2>Built to extend, not just to demo.</h2>
       <p class="desc">Every item below is a scoped, already-understood extension of code that already runs &mdash; not a research problem or a wishlist. Grouped the way a real production rollout would prioritize them: what's cheapest to harden before this touches a real ledger, what it actually takes to connect to Razorpay's own systems, what closes an already-documented edge case, and what can honestly wait.</p>
     </div>
