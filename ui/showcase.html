@@ -178,7 +178,7 @@
 
             <rect x="1140" y="700" width="300" height="84" rx="12" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.6" stroke-dasharray="7,5"/>
             <text x="1290" y="726" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-weight="700" font-size="14" fill="var(--ink)">AIRFLOW</text>
-            <text x="1290" y="746" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">re-runs the matcher on a schedule</text>
+            <text x="1290" y="746" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">re-runs the matcher, scheduled or on demand</text>
             <text x="1290" y="762" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">POST /api/reverify &middot; auto-closes stale cases</text>
 
             <rect x="860" y="745" width="260" height="60" rx="10" fill="var(--surface)" stroke="var(--ink-mute)" stroke-width="1.4" stroke-dasharray="6,4"/>
@@ -257,7 +257,7 @@
       <div class="value-card reveal">
         <span class="vn">617</span>
         <h4>Escalations land in a real queue &mdash; and can close themselves</h4>
-        <p>Every case the gate declines to auto-resolve becomes an immutable, append-only review case carrying the AI's full proposal and evidence trail. A scheduled Airflow job re-runs the matcher and auto-closes any case whose transaction is now genuinely clean &mdash; not merely reclassified &mdash; so the backlog shrinks without a human re-checking each one.</p>
+        <p>Every case the gate declines to auto-resolve becomes an immutable, append-only review case carrying the AI's full proposal and evidence trail. Re-verification re-runs the matcher and auto-closes any case whose transaction is now genuinely clean &mdash; not merely reclassified &mdash; on Airflow's own schedule, or on demand from the review dashboard itself, so the backlog shrinks without a human re-checking each one.</p>
       </div>
     </div>
   </div>
@@ -359,7 +359,7 @@
 </main>
 
 <footer>
-  <p class="mono">AI Finance Controller &middot; Razorpay Buildathon, Track 04 &middot; seeded &amp; reproducible (RNG_SEED=42) &middot; every number computed from an actual pipeline run and embedded as a static snapshot, never hand-typed &mdash; see export_dashboard_data.py. Deterministic layers (matcher, gate, cash position, throughput) re-verified 2026-08-28; live-LLM figures (RAG ablation, investigation traces) are from their own logged runs and are not deterministically reproducible by design.</p>
+  <p class="mono">AI Finance Controller &middot; Razorpay Buildathon, Track 04 &middot; seeded &amp; reproducible (RNG_SEED=42) &middot; every number computed from an actual pipeline run and embedded as a static snapshot, never hand-typed &mdash; see export_dashboard_data.py. Deterministic layers (matcher, gate, cash position, throughput) re-verified 2026-09-02; live-LLM figures (RAG ablation, investigation traces) are from their own logged runs and are not deterministically reproducible by design.</p>
   <p class="mono" style="margin-top:10px;">Source: <a href="https://github.com/ArnavModi-MSIT/Reconciliation-Tool" style="color:var(--accent);">github.com/ArnavModi-MSIT/Reconciliation-Tool</a> &mdash; private during judging, opening publicly at submission.</p>
 </footer>
 
