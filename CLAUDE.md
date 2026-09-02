@@ -1317,6 +1317,37 @@ accepted, order-dependent-greedy-consumption limitation (above) stays
 exactly that — documented and tested, not newly proven dangerous — but is
 now backed by a measured overlap number instead of an assumption either way.
 
+**The consumption/conservation invariants above are now a live gate every
+real run passes through (`run_matcher.py`'s `run()`), not only a check
+`evaluate.py` happens to call.** This project's core rule ("AI proposes,
+deterministic code disposes") is usually read as being about the LLM
+layer specifically — but a wrong classification the MATCHER itself
+silently produced would be exactly as dangerous downstream: it becomes a
+case's `final_exception_type`, `agent/gate.py` treats it as authoritative
+ground truth, and no LLM ever gets a chance to question it, since
+escalation is keyed off that exact field. `verify_consumption_invariants()`
+already raised its own `AssertionError` on a real violation; the new part
+is that `run()` — the one function every real caller (`agent/`,
+`investigator/`, `review_backend/`, `cash_position/`, every test) goes
+through — now calls it (and a new `MatcherInvariantError` raise on
+`settlement_conservation_summary()`'s own real-delta finding, which
+doesn't raise on its own since `evaluate.py`'s diagnostic report wants a
+full summary even when something's wrong, not a crash mid-report)
+unconditionally, every time. Verified this doesn't meaningfully cost
+anything: **1.72ms** measured overhead per run (20-run average), against
+a matcher that already takes 0.5–1.2s end to end. Real dataset re-run
+clean afterward — byte-identical headline numbers (1,397 clean / 617
+escalated / 58 auto-resolve-eligible) — and a real `seed_review_queue.py`
+re-seed against the live 617-case demo database (617 unchanged, 0
+conflicts), confirming this is purely additive verification, not a
+behavior change. **Proven with a real tamper test**, same discipline as
+this project's other invariant guards: monkeypatched
+`settlement_conservation_summary()` (as `run_matcher.py` itself imported
+it) to return a fabricated real-delta finding, confirmed `run()` raises
+`MatcherInvariantError` naming the fake settlement, restored the real
+function, confirmed a subsequent real `run()` call succeeds cleanly
+again. 2 new tests in `tests/test_matcher_invariants.py`.
+
 **Cross-case root-cause clustering (`matching/root_cause.py`, new)** —
 collapses the escalated *queue* into the far smaller set of underlying
 *problems*. An analyst opening the review queue sees 617 tickets; they are
@@ -4412,6 +4443,19 @@ embeddings turned out to be the wrong tool.
   clock, unseeded randomness, and env-var-driven config drift. Verified
   non-vacuous with a real tamper test the same way as the boundary test
   above.
+- **No proposer is trusted, including the deterministic ones.** The "AI
+  proposes, deterministic code disposes" rule is usually read as being
+  about the LLM layer specifically, but a wrong classification the
+  matcher itself silently produced would reach `agent/gate.py` as
+  unquestioned ground truth just the same. `run_matcher.py`'s `run()` —
+  the one function every real caller goes through — independently
+  re-verifies the matcher's own claimed output on every call
+  (`matching/diagnostics.py`'s consumption/conservation invariants,
+  previously only run when `evaluate.py` asked for a diagnostic report),
+  raising `MatcherInvariantError` if the matcher's own report ever
+  disagrees with a from-scratch recomputation of the same facts. Measured
+  cost: 1.72ms/run. Verified non-vacuous with a real tamper test the same
+  way as the two guards above.
 - **The AI's original proposal is immutable.** `seed_review_queue.py`
   never overwrites a seeded case's frozen AI-proposal columns; later
   layers (investigation results, re-verification's `auto_closed` decision)
