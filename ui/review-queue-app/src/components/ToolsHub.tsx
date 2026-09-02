@@ -11,12 +11,21 @@ import { ReverificationPanel } from "./ReverificationPanel";
 // vertically -- a reviewer had to scroll past five closed headers to
 // reach the sixth. Same idea, same per-panel components (each stripped of
 // its own collapse chrome -- see the "Header/collapse chrome removed"
-// note atop each), now addressed by a sidebar tab list: exactly one panel
-// mounted in the content pane at a time, which is also why each panel's
-// query hooks can now just pass `true` unconditionally for `enabled` --
-// mounting IS the open signal. A seventh tool (re-verification) joined
-// after an audit found POST /api/reverify had no dashboard caller at all
-// -- Airflow could trigger it, a human never could.
+// note atop each), now addressed by a sidebar tab list. A seventh tool
+// (re-verification) joined after an audit found POST /api/reverify had no
+// dashboard caller at all -- Airflow could trigger it, a human never could.
+//
+// A panel mounts the FIRST time its tab is opened and then stays mounted
+// for the rest of the page's life -- switching tabs only toggles CSS
+// visibility (see `hidden` below), it never unmounts anything. This is
+// deliberate, not incidental: QAPanel's answer and ReverificationPanel's
+// preview/confirm state both live in local useState/useMutation, which
+// React throws away on unmount -- a naive "only render the active panel"
+// approach silently discarded a real ~85s Ollama answer the moment a
+// reviewer glanced at another tab. `visited` tracks which tools have ever
+// been opened so a tool nobody clicked yet still costs zero network
+// requests -- switching tabs was never meant to become "eagerly fetch
+// all seven panels on page load."
 
 type ToolId = "qa" | "reconciliation" | "root-cause" | "matcher" | "corrections" | "audit" | "reverify";
 type Accent = "accent" | "good" | "warn";
@@ -91,8 +100,12 @@ const ACCENT_DOT: Record<Accent, string> = {
 
 export function ToolsHub() {
   const [active, setActive] = useState<ToolId | null>(null);
-  const activeTool = TOOLS.find((t) => t.id === active) ?? null;
-  const ActivePanel = activeTool?.Panel;
+  const [visited, setVisited] = useState<ReadonlySet<ToolId>>(() => new Set());
+
+  const handleSelect = (id: ToolId) => {
+    setActive((prev) => (prev === id ? null : id));
+    setVisited((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
 
   return (
     <div className="mb-6">
@@ -108,7 +121,7 @@ export function ToolsHub() {
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setActive(isActive ? null : t.id)}
+                onClick={() => handleSelect(t.id)}
                 aria-pressed={isActive}
                 className={`min-w-[230px] shrink-0 rounded-xl border-[1.5px] border-l-4 bg-surface px-4 py-3 text-left shadow-sm transition-colors lg:min-w-0 lg:shrink ${
                   isActive ? `${ACCENT_BAR[t.accent]} border-border-2 bg-ground-2` : "border-l-transparent border-border"
@@ -127,9 +140,7 @@ export function ToolsHub() {
         </nav>
 
         <div className="min-w-0 max-h-[640px] overflow-y-auto rounded-2xl border border-border bg-surface shadow-sm">
-          {ActivePanel ? (
-            <ActivePanel />
-          ) : (
+          {active === null && (
             <div className="flex min-h-[220px] flex-col items-center justify-center gap-1.5 px-6 py-10 text-center">
               <p className="text-[0.92rem] font-semibold text-ink">Pick a tool on the left</p>
               <p className="max-w-sm text-[0.8rem] text-ink-mute">
@@ -139,6 +150,11 @@ export function ToolsHub() {
               </p>
             </div>
           )}
+          {TOOLS.filter((t) => visited.has(t.id)).map((t) => (
+            <div key={t.id} className={t.id === active ? "" : "hidden"}>
+              <t.Panel />
+            </div>
+          ))}
         </div>
       </div>
     </div>
