@@ -20,8 +20,10 @@ never the LLM's opinion of what the exception is.
 
 ## Demo video
 
-[**Watch the overview**](media/overview.mp4) — the fastest way to see the
-pipeline, the review queue, and the AI tools in action.
+The fastest way to see the pipeline, the review queue, and the AI tools
+in action:
+
+<video src="https://github.com/user-attachments/assets/61a97019-9bbc-4a85-8e5c-547a7d594c81" controls="controls" style="max-width: 100%; height: auto;"></video>
 
 ---
 
