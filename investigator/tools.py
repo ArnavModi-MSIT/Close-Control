@@ -253,6 +253,63 @@ def lookup_related_transactions(ctx: ToolContext, transaction_id: str,
     }
 
 
+def _find_near_miss(ctx: ToolContext, ref_date: dt.date, expected_amount: float | None) -> dict | None:
+    """When the strict window+tolerance search above finds nothing at all,
+    look wider (config.NEAR_MISS_WINDOW_DAYS, currently 30) for the single
+    closest-by-amount candidate and explain exactly why it wasn't accepted
+    -- "nothing matched" and "here's the nearest thing we saw and how far
+    off it was" are different amounts of information for a reviewer, and
+    only the second one is currently ever surfaced, and only when the
+    investigation agent happens to call this tool.
+
+    Purely explanatory: this can never become a match on its own. The
+    matcher's own passes (matching/engine.py) are the only place a real
+    match is ever decided -- this function doesn't feed back into them at
+    all, the same "diagnostics never change a classification" contract as
+    matching/diagnostics.py.
+
+    Ranked by amount distance, not a combined amount+date score: the same
+    payment posted late is (almost always) the exact same rupee figure,
+    while a coincidentally-close DATE with a wildly different amount is
+    much more likely to be a different merchant's unrelated posting than
+    the one actually being searched for."""
+    if expected_amount is None:
+        return None
+    bank = ctx.bank.copy()
+    bank["credit_date"] = pd.to_datetime(bank["credit_date"]).dt.date
+    d_from = ref_date - dt.timedelta(days=config.NEAR_MISS_WINDOW_DAYS)
+    d_to = ref_date + dt.timedelta(days=config.NEAR_MISS_WINDOW_DAYS)
+    wide = bank[(bank["credit_date"] >= d_from) & (bank["credit_date"] <= d_to)].copy()
+    if wide.empty:
+        return None
+
+    wide["amount_diff_rupees"] = (wide["credit_amount_rupees"] - expected_amount).abs()
+    best = wide.loc[wide["amount_diff_rupees"].idxmin()]
+    date_diff_days = (best["credit_date"] - ref_date).days
+    status = ("already_matched_elsewhere" if best["bank_txn_id"] in ctx.claimed_bank_txn_ids
+              else "unclaimed")
+
+    explanation = (
+        f"closest candidate by amount within {config.NEAR_MISS_WINDOW_DAYS} days: off by "
+        f"Rs.{best['amount_diff_rupees']:.2f}, {abs(date_diff_days)} day(s) "
+        f"{'after' if date_diff_days >= 0 else 'before'} the expected date"
+    )
+    if status == "already_matched_elsewhere":
+        explanation += " -- and already claimed by a different settlement"
+
+    return {
+        "bank_txn_id": best["bank_txn_id"],
+        "utr": best["utr"],
+        "credit_amount_rupees": float(best["credit_amount_rupees"]),
+        "credit_date": best["credit_date"].isoformat(),
+        "narration": best["narration"],
+        "candidate_status": status,
+        "amount_diff_rupees": round(float(best["amount_diff_rupees"]), 2),
+        "date_diff_days": int(date_diff_days),
+        "explanation": explanation,
+    }
+
+
 def search_bank_statement(ctx: ToolContext, transaction_id: str, window_days: int = 5,
                            amount_tolerance_rupees: float = 5.0) -> dict:
     """Actively search for a plausible unclaimed bank posting near this
@@ -265,7 +322,15 @@ def search_bank_statement(ctx: ToolContext, transaction_id: str, window_days: in
     anywhere in the evidence block) hallucinated a plausible-looking but
     completely wrong window (2023 dates against a dataset that only spans
     2026-07). Same fix pattern as lookup_related_transactions: derive the
-    window from data we already have, don't make the model guess it."""
+    window from data we already have, don't make the model guess it.
+
+    When the strict search below finds NOTHING, the response also carries
+    a `near_miss` field (see _find_near_miss()) -- the closest thing that
+    exists anywhere within a much wider window, and exactly why it fell
+    short. Omitted entirely (not present as a key) when the strict search
+    did find something, so a caller checking `"near_miss" in result`
+    can't mistake "we didn't bother looking further" for "we looked
+    further and found nothing.\""""
     if transaction_id not in ctx.captured_date_by_txn:
         return {"error": f"no gateway record for {transaction_id}"}
 
@@ -291,7 +356,7 @@ def search_bank_statement(ctx: ToolContext, transaction_id: str, window_days: in
         lambda t: "already_matched_elsewhere" if t in ctx.claimed_bank_txn_ids else "unclaimed")
     unclaimed = matches[matches["candidate_status"] == "unclaimed"]
 
-    return {
+    result = {
         "searched_date_range": [d_from.isoformat(), d_to.isoformat()],
         "searched_expected_amount_rupees": expected_amount,
         "candidate_count": len(matches),
@@ -301,6 +366,11 @@ def search_bank_statement(ctx: ToolContext, transaction_id: str, window_days: in
         .head(10).assign(credit_date=lambda d: d["credit_date"].astype(str))
         .to_dict(orient="records"),
     }
+    if len(matches) == 0:
+        near_miss = _find_near_miss(ctx, ref_date, expected_amount)
+        if near_miss is not None:
+            result["near_miss"] = near_miss
+    return result
 
 
 def compute_delta(ctx: ToolContext, a: float, b: float) -> dict:

@@ -53,3 +53,10 @@ THINK_MODE = False
 # lookup_related_transactions. A business, not a technical, choice --
 # separate constant so it's easy to find and justify.
 RELATED_TRANSACTION_WINDOW_DAYS = 2
+
+# How wide a net search_bank_statement()'s near-miss fallback casts when
+# its own strict window+tolerance search finds nothing at all. 30 days,
+# not unbounded -- a candidate a full month away is a different problem
+# (or a coincidence), not "the same posting, just late." Purely
+# explanatory either way; see search_bank_statement()'s own docstring.
+NEAR_MISS_WINDOW_DAYS = 30

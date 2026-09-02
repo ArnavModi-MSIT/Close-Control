@@ -3228,6 +3228,49 @@ observed phenomenon on the curated dataset, not theoretical: `trn-000007`
 shows `candidate_count: 1` but `unclaimed_candidate_count: 0` — the one
 candidate is already matched elsewhere.
 
+**Near-miss fallback when the strict search finds nothing at all
+(`investigator/tools.py`'s `_find_near_miss()`).** "No candidate found"
+and "here's the closest thing we saw and exactly how far off it was" are
+different amounts of information for a reviewer, and only the second one
+was ever surfaced — and only when the investigation agent happened to
+call this tool. When the strict window+tolerance search above returns
+zero candidates, `search_bank_statement()` now additionally searches a
+much wider net (`investigator.config.NEAR_MISS_WINDOW_DAYS = 30`) for the
+single closest-by-amount candidate and reports it under a `near_miss` key
+— omitted entirely (not `null`) when the strict search DID find
+something, so a caller checking `"near_miss" in result` can't confuse "we
+found a real match" with "we looked further and found nothing there
+either." Ranked by amount distance, not a combined amount+date score: the
+same payment posted late is (almost always) the exact same rupee figure,
+while a coincidentally-close date with a wildly different amount is far
+more likely to be an unrelated posting. Purely explanatory, same
+"diagnostics never change a classification" contract as
+`matching/diagnostics.py` — this can never become a match on its own,
+only the matcher's own passes decide that. Shared automatically with
+`qa_agent/`'s Q&A tool (which imports this exact function, not a copy)
+and surfaced to the model via the tool schema's own description, which
+tells it never to cite a `near_miss` as evidence a posting was actually
+found.
+
+Measured against the real dataset's escalated `missing_bank_reference` /
+`unexplained_shortage` / `settlement_bank_posting_not_found` cases (505):
+the strict search already finds something for 23; the near-miss fallback
+finds something for **482 more (95.4%)**; zero cases have nothing within
+even the widened 30-day net. Most near-misses for `missing_bank_reference`
+specifically report `already_matched_elsewhere` — expected, not a bug:
+497 of those cases share one root cause (a batched settlement missing its
+UTR, see `matching/root_cause.py`'s clustering), so the nearby postings
+in the batch are usually already legitimately claimed by other
+transactions in the same settlement, not real leads. The mechanism
+reports that honestly (correctly discouraging a reviewer from chasing a
+coincidence) rather than only ever showing an unclaimed-looking result.
+5 new tests in `tests/test_investigator_tools.py` (a real strict match
+carries no `near_miss` key at all; a genuine late-and-short near-miss is
+found and explained; an already-claimed one is labeled as such; nothing
+within 30 days stays absent, not a misleading "close enough"; ranking is
+proven to prefer amount closeness over date closeness with a same-day
+-wrong-amount vs. week-late-exact-amount pair).
+
 A tool round failing mid-investigation (`stopped_reason:
 "tool_round_failed: ..."`) previously didn't constrain the model's own
 *separate* `final_answer()` call at all — the model could still claim

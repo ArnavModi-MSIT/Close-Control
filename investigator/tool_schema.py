@@ -101,7 +101,14 @@ TOOL_SCHEMAS = [
                 "evidence) or 'already_matched_elsewhere' (already consumed by a different "
                 "settlement's match -- a date/amount coincidence, NOT valid evidence for this "
                 "case). Only cite unclaimed candidates as evidence; unclaimed_candidate_count "
-                "tells you how many there actually are before you look at the list."
+                "tells you how many there actually are before you look at the list. If NOTHING "
+                "is found in the strict window, the response may instead carry a `near_miss` "
+                "field -- the single closest candidate found in a much wider search, with "
+                "amount_diff_rupees/date_diff_days/explanation saying exactly why it fell "
+                "short. This is NOT a valid match -- never cite it as evidence a posting was "
+                "found -- but it is useful context for root_cause (e.g. \"no exact match, but "
+                "the closest candidate was Rs.340 short\") and for recommending what a human "
+                "should chase next."
             ),
             "parameters": {
                 "type": "object",
