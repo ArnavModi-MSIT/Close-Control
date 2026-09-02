@@ -25,7 +25,27 @@ def build_payments(n: int) -> pd.DataFrame:
         method = pick_method()
         gross = gross_amount()
 
-        instant = (random.random() < 0.05) and failure_mode != "held_for_risk_review"
+        # held_for_risk_review was already excluded here (an instant
+        # settlement makes no sense for a payment that never settles at
+        # all) -- timing_lag_beyond_t2 has the identical problem and was
+        # missing from this exclusion: instant forces lag_days=0 and
+        # settle_day=captured_day unconditionally, silently overwriting
+        # the failure mode's own intended 3-5 business-day lag on the
+        # ~5% of beyond_t2 payments that happened to also draw instant=True.
+        # The resulting payment settles same-day while ground_truth.csv
+        # still labels it timing_lag_beyond_t2 -- a real, reproducible
+        # label/data disagreement, found via a real multi-seed accuracy
+        # sweep (scripts/run_seed_benchmark.py), not a theoretical one: 10
+        # of 25 independent seeds showed exactly this pattern (1-2
+        # transactions each), and the current default seed=42 dataset
+        # itself has one instance (trn-001201) -- which happens to still
+        # score correctly today only because that specific transaction
+        # also independently carries a missing_bank_reference signal, not
+        # because the timing bug isn't real. See CLAUDE.md's
+        # data_generation/ section for why the live seed=42 dataset is
+        # deliberately NOT regenerated to pick up this fix.
+        instant = (random.random() < 0.05) and failure_mode not in (
+            "held_for_risk_review", "timing_lag_beyond_t2")
         beyond_t2 = failure_mode == "timing_lag_beyond_t2"
         lag_days = 0 if instant else (random.choice([3, 4, 5]) if beyond_t2 else 2)
         settle_day = captured_day if instant else add_business_days(captured_day, lag_days)

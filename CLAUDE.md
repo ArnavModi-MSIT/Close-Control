@@ -498,9 +498,18 @@ not a bug. See §7 Layer 7 for the mechanism.
   rate (15/2,072), 100% hard-negative resolution (40/40). Auto-resolve
   precision 98.97% (1440/1455 predicted auto-resolves correct), coverage
   74.15% (1440/1942 that should have auto-resolved actually did).
-  Seed-robustness (seed=1337, independent regen): 100.0% accuracy
-  (2071/2072), 0.68% false-auto-resolve — not accidentally tuned to one
-  seed's random draws. Measured throughput: ~1,200-2,900 txn/s,
+  Seed-robustness: no longer just one alternate seed — `scripts/run_seed_benchmark.py`
+  regenerates the whole dataset from scratch for N independent seeds and
+  reports the accuracy distribution, not a single data point (see
+  `data_generation/` below for the real bug this caught). 25 seeds
+  (1000–1024): **100.0% settlement-aware accuracy on all 25**, mean
+  false-auto-resolve 0.61% (range 0.10–1.06%) — not accidentally tuned to
+  one seed's random draws. The originally-documented single-alternate
+  -seed check (seed=1337: 100.0% accuracy, 2071/2072, 0.68%
+  false-auto-resolve) is kept as a permanent, minimal-tooling sanity
+  check; its own 2071/2072 was the same class of issue the 25-seed sweep
+  later root-caused and fixed, just never investigated at the time since
+  a single 1-decimal-rounded "100.0%" looked clean. Measured throughput: ~1,200-2,900 txn/s,
   deterministic, zero LLM calls. (Throughput is genuinely machine-load
   dependent — the same code on the same dataset measured 1,214 / 2,339 /
   2,869 txn/s across three runs minutes apart with Postgres+Redis
@@ -573,6 +582,75 @@ external review pass that found this literal `20` duplicated at both
 `generate_data.py`'s `add_hard_negatives()` call site and its
 `dataset_metadata.json` write, with nothing keeping the two in sync if one
 were ever edited alone.
+
+**A real bug in `payments.py`'s `instant` draw, found via a genuinely new
+verification method (`scripts/run_seed_benchmark.py`), not written
+defensively in advance.** The existing seed-robustness claim ("100.0%
+accuracy on an independent seed") rested on exactly one alternate seed
+(1337) — a real check, but one data point, and its own rounded "100.0%"
+was quietly hiding a real 2071/2072. A new script regenerates the whole
+dataset from scratch for N independent seeds (subprocess per seed —
+`RNG_SEED_OVERRIDE` is read once at this module's import time, confirmed
+by reading the code, so mutating the env var mid-process would silently
+keep re-scoring the first seed forever) and reports the accuracy
+distribution, reusing `evaluate.py`'s own `evaluate()` directly rather
+than a second hand-copied scorer. First real run, 25 seeds: **10 of 25
+(40%) scored below 100% accuracy** (99.8–99.9%, mean 99.956%) — not
+noise, a real, reproducible pattern.
+
+Root-caused by hand on one failing seed rather than guessed at:
+`payments.py`'s `instant` draw (`random.random() < 0.05`, independent of
+`failure_mode` except for an explicit `held_for_risk_review` exclusion)
+was missing an identical exclusion for `timing_lag_beyond_t2`. Whenever
+both happened to co-occur (~5% of `timing_lag_beyond_t2` payments), the
+`instant` branch won the ternary, forcing `lag_days = 0` and
+`settle_day = captured_day` — the payment settles same-day while
+`ground_truth.csv` still labels it `timing_lag_beyond_t2`, and the
+matcher correctly sees no timing lag at all, scoring as `clean`. Checked
+whether this was already live on the checked-in seed=42 dataset before
+assuming it was purely a new-seed problem: **yes** — `trn-001201` has
+exactly this pattern, and the only reason it doesn't currently move
+`evaluate.py`'s published 100% figure is that it independently also
+carries a `missing_bank_reference` signal, which still correctly
+escalates it (a coincidence of co-occurring signals, not evidence the
+timing bug isn't real). Fixed by adding the same exclusion
+`timing_lag_beyond_t2` already needed:
+`failure_mode not in ("held_for_risk_review", "timing_lag_beyond_t2")`.
+
+**Deliberately NOT regenerating the checked-in seed=42 dataset to pick up
+this fix.** The fix inserts one additional `random.choice([3,4,5])` draw
+into the RNG stream for every payment that hits the narrow overlap case —
+unavoidable, since actually computing a real lag where none was drawn
+before must consume randomness. That shifts every subsequent random draw
+for the rest of that seeded generation run, which would silently
+invalidate the 617-case seeded review queue's content hashes, the 279
+real logged investigations, and every currently-published headline
+number — a far worse outcome than one already-correctly-scored historical
+transaction. Same reasoning this project already applied to chargebacks
+and loan recoveries (appended in their own ID space specifically to avoid
+reshuffling the existing RNG stream). The fix protects every *future*
+regeneration (a fresh judge run, a different seed) — new data
+-integrity guard added (`validation.py`'s `_validate_timing_lag_payments()`,
+same anti-vacuity-guard class as the loan-recovery/chargeback checks)
+so a regression reports itself immediately instead of waiting for
+another multi-seed sweep.
+
+Verified three ways: the 25-seed benchmark re-run after the fix shows
+**0 of 25 seeds below 100% accuracy** (mean/min/max all exactly 100.0);
+`tests/test_timing_lag_generation.py` forces `random.random()` to always
+return a value under the instant threshold (the exact worst-case
+condition that used to trigger the bug on every eligible payment) and
+proves every `timing_lag_beyond_t2` payment drawn under it still settles
+strictly after the standard T+2 date, while confirming ordinary payments
+are still instant-eligible under the same forced draw (the fix is
+narrowly scoped, not a blanket regression); and a direct tamper test on
+the new validation guard (a synthetic same-day `timing_lag_beyond_t2`
+row) proves it's non-vacuous. The live `data/` directory's own file
+hashes were confirmed byte-identical before and after this entire
+investigation (`gateway.json@be506a74fa36`, etc. — unchanged), and
+`evaluate.py`/`test_review_api.py`/`seed_review_queue.py` all re-run
+clean against it afterward (1,397 clean / 617 escalated / 58
+auto-resolve-eligible, 97/97, 617 unchanged, 0 conflicts).
 
 `validation.py` gained real invariants beyond dtype/PK-uniqueness/leakage
 checks: hard-negative row count matches `2 × HARD_NEGATIVE_PAIRS` and every

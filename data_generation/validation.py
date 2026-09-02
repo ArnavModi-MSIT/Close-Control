@@ -4,6 +4,43 @@ uniqueness, leakage), not just structural existence. Fails loudly."""
 import pandas as pd
 
 from . import config
+from .utils import add_business_days
+
+
+def _validate_timing_lag_payments(payments, errors):
+    """Anti-vacuity guard, same class as the loan-recovery/chargeback ones
+    below: a timing_lag_beyond_t2 payment only demonstrates anything if it
+    actually settles LATE.
+
+    Found via a real bug, not written defensively in advance: payments.py's
+    own `instant` draw (~5% of payments, independent of failure_mode except
+    for an explicit held_for_risk_review exclusion) used to also override
+    timing_lag_beyond_t2's intended 3-5 business-day lag, forcing
+    settle_day = captured_day whenever both happened to co-occur. The
+    payment then settles same-day while ground_truth.csv still labels it
+    timing_lag_beyond_t2 -- a real label/data disagreement, caught by a
+    real multi-seed accuracy sweep (scripts/run_seed_benchmark.py): 10 of
+    25 independent seeds showed exactly this pattern, and the checked-in
+    seed=42 dataset had one instance too (trn-001201, which happened to
+    still score correctly only because it also independently carries an
+    unrelated missing_bank_reference signal -- see CLAUDE.md's
+    data_generation/ section). Fixed in payments.py; this guard exists so
+    a future regression reports itself immediately instead of waiting for
+    another multi-seed sweep to notice."""
+    beyond_t2 = payments[(payments["failure_mode"] == "timing_lag_beyond_t2")
+                          & (~payments["is_duplicate_child"])]
+    if not len(beyond_t2):
+        return
+
+    captured_day = pd.to_datetime(beyond_t2["captured_at"]).dt.date
+    standard_t2 = captured_day.apply(lambda d: add_business_days(d, 2))
+    not_late = beyond_t2[beyond_t2["settle_day"] <= standard_t2]
+    if len(not_late):
+        errors.append(
+            f"{len(not_late)} timing_lag_beyond_t2 payment(s) settle on or before the "
+            f"standard T+2 date, so they are not actually late despite the label: "
+            f"{not_late['transaction_id'].tolist()[:5]}"
+        )
 
 
 def _validate_loan_recoveries(gateway_df, ledger_df, loan_book_df, errors):
@@ -287,6 +324,7 @@ def validate_dataset(payments, gateway_df, bank_df, ledger_df, gt_df, hard_negat
 
     _validate_loan_recoveries(gateway_df, ledger_df, loan_book_df, errors)
     _validate_chargebacks(gateway_df, ledger_df, bank_df, gt_df, errors)
+    _validate_timing_lag_payments(payments, errors)
 
     # --- chargeback raw count invariant (added via external review, same
     # class as the hard-negative count check above) -- chargeback_received
