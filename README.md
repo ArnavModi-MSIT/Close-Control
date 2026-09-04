@@ -2,9 +2,6 @@
 
 **An AI Finance Controller for multi-source settlement reconciliation.**
 
-Submission for Razorpay's `/buildathon`, Track 04 — **"Run the books and
-the cash position."**
-
 A multi-source settlement reconciliation system: payment gateway vs. two
 banking partners vs. Razorpay's own internal settlement ledger vs.
 Razorpay Capital's loan-recovery ledger. A deterministic matcher resolves
